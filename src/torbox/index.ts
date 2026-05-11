@@ -54,11 +54,42 @@ export async function checkDebridAvailability(
   return result;
 }
 
-export async function getDebridStreamUrl( torrent: TorrentResult, season?: number, episode?: number ): Promise<string | null> {
+export async function getDebridStreamUrl(
+  torrent: TorrentResult,
+  season?: number,
+  episode?: number
+): Promise<string | null> {
   try {
+    // First add/create the torrent so TorBox gives us a torrent_id.
+    const create = await axios.post(
+      `${BASE_URL}/torrents/createtorrent`,
+      {
+        magnet: torrent.magnetUrl || `magnet:?xt=urn:btih:${torrent.infoHash}`,
+        seed: 1,
+        allow_zip: false,
+      },
+      {
+        headers: { Authorization: `Bearer ${getKey()}` },
+        timeout: 15000,
+      }
+    );
+
+    const torrentId =
+      create.data?.data?.torrent_id ||
+      create.data?.data?.id ||
+      create.data?.data;
+
+    if (!torrentId) {
+      logger.warn('TorBox create did not return torrent id', {
+        hash: torrent.infoHash,
+        data: create.data,
+      });
+      return null;
+    }
+
     const params: Record<string, any> = {
       token: getKey(),
-      hash: torrent.infoHash,
+      torrent_id: torrentId,
       file_id: 0,
     };
 
@@ -76,7 +107,7 @@ export async function getDebridStreamUrl( torrent: TorrentResult, season?: numbe
     const status = err?.response?.status;
 
     if (status === 429) {
-      logger.warn('TorBox rate limited on requestdl, skipping torrent', {
+      logger.warn('TorBox rate limited on create/requestdl, skipping torrent', {
         hash: torrent.infoHash,
       });
       await sleep(1200);
@@ -84,8 +115,9 @@ export async function getDebridStreamUrl( torrent: TorrentResult, season?: numbe
     }
 
     if (status === 422) {
-      logger.warn('TorBox rejected requestdl for torrent', {
+      logger.warn('TorBox rejected create/requestdl for torrent', {
         hash: torrent.infoHash,
+        response: err?.response?.data,
       });
       return null;
     }
@@ -93,6 +125,7 @@ export async function getDebridStreamUrl( torrent: TorrentResult, season?: numbe
     logger.error('TorBox stream URL failed', {
       hash: torrent.infoHash,
       err: err.message,
+      response: err?.response?.data,
     });
     return null;
   }
