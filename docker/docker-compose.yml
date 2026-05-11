@@ -1,0 +1,55 @@
+services:
+  addon:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: nuvio-addon
+    restart: unless-stopped
+    env_file: ../.env
+    ports:
+      - "0.0.0.0:6000:6000"
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - addon-net
+      - npm_default
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  redis:
+    image: redis:7-alpine
+    container_name: stremio-redis
+    restart: unless-stopped
+    command: >
+      redis-server
+      --maxmemory 512mb
+      --maxmemory-policy allkeys-lru
+      --save 60 1000
+      --appendonly yes
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - addon-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "2"
+
+volumes:
+  redis-data:
+
+networks:
+  addon-net:
+    driver: bridge
+  npm_default:
+    external: true
