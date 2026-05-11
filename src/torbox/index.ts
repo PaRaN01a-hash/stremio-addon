@@ -5,7 +5,7 @@ import { cacheGet, cacheSet, CacheKeys } from '../cache/redis';
 import { logger } from '../utils/logger';
 
 const DEBRID_CACHE_TTL = parseInt(process.env.CACHE_TTL_DEBRID || '86400');
-const BASE_URL = 'https://api.torbox.app/v1/api';
+const BASE_URL = 'https://api.torbox.app/v1/api'; function sleep(ms: number): Promise<void> { return new Promise((resolve) => setTimeout(resolve, ms)); }
 
 function getKey(): string {
   return process.env.TORBOX_API_KEY || '';
@@ -54,17 +54,14 @@ export async function checkDebridAvailability(
   return result;
 }
 
-export async function getDebridStreamUrl(
-  torrent: TorrentResult,
-  season?: number,
-  episode?: number
-): Promise<string | null> {
+export async function getDebridStreamUrl( torrent: TorrentResult, season?: number, episode?: number ): Promise<string | null> {
   try {
     const params: Record<string, any> = {
       token: getKey(),
       hash: torrent.infoHash,
       file_id: 0,
     };
+
     if (season !== undefined) params.season = season;
     if (episode !== undefined) params.episode = episode;
 
@@ -76,7 +73,27 @@ export async function getDebridStreamUrl(
     const url = response.data?.data;
     return typeof url === 'string' ? url : null;
   } catch (err: any) {
-    logger.error('TorBox stream URL failed', { hash: torrent.infoHash, err: err.message });
+    const status = err?.response?.status;
+
+    if (status === 429) {
+      logger.warn('TorBox rate limited on requestdl, skipping torrent', {
+        hash: torrent.infoHash,
+      });
+      await sleep(1200);
+      return null;
+    }
+
+    if (status === 422) {
+      logger.warn('TorBox rejected requestdl for torrent', {
+        hash: torrent.infoHash,
+      });
+      return null;
+    }
+
+    logger.error('TorBox stream URL failed', {
+      hash: torrent.infoHash,
+      err: err.message,
+    });
     return null;
   }
 }
