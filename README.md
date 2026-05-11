@@ -1,3 +1,4 @@
+HEAD
 # Personal Stremio Addon
 
 A personal Stremio-compatible addon for Nuvio with:
@@ -147,3 +148,7 @@ docker exec stremio-redis redis-cli INFO stats
 | `PRECACHE_ENABLED` | `true` | Enable background pre-cache worker |
 | `PRECACHE_CRON` | `0 */6 * * *` | Pre-cache schedule (cron format) |
 | `PRECACHE_LIMIT` | `50` | Max titles to pre-cache per run |
+=======
+# stremio-addon
+Scrapper
+5ef7a1d0def5e6bc708f1f83968f92ea3f71d168
