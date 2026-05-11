@@ -1,0 +1,2 @@
+# stremio-addon
+Scrapper
