@@ -166,14 +166,19 @@ async function fetchFreshStreams(meta: StreamMeta): Promise<Stream[]> {
   const { imdbId, type, season, episode } = meta;
 
   // Run internal providers + bridged addons in parallel
-  const [zileanTorrents, jackettTorrents, httpStreams, externalStreams] = await Promise.all([
+  // Fast path: do NOT wait for external addons on cold load.
+  // Zilean/TorBox returns first; Comet/HDHub can be added by background refresh.
+  const [zileanTorrents, httpStreams] = await Promise.all([
     searchZilean(meta),
-    searchJackett(imdbId, type, season, episode),
     getHttpFallbackStreams(imdbId, season, episode),
-    getExternalAddonStreams(meta),
   ]);
 
-  // Zilean/DMM first, Jackett as fallback. Dedup by infoHash before TorBox check.
+  const minZilean = parseInt(process.env.ZILEAN_MIN_RESULTS_BEFORE_JACKETT || '20');
+  const jackettTorrents = zileanTorrents.length >= minZilean
+    ? []
+    : await searchJackett(imdbId, type, season, episode);
+
+  // Zilean/DMM first, Jackett only if Zilean is weak. Dedup by infoHash before TorBox check.
   const seenHashes = new Set<string>();
   const torrents = [...zileanTorrents, ...jackettTorrents].filter((torrent) => {
     const hash = torrent.infoHash?.toLowerCase();
@@ -185,7 +190,7 @@ async function fetchFreshStreams(meta: StreamMeta): Promise<Stream[]> {
   // Resolve torrents through TorBox
   const debridResults = await resolveDebrid(torrents, season, episode);
 
-  const streams = [...buildStreams(debridResults, httpStreams, season, episode), ...externalStreams];
+  const streams = buildStreams(debridResults, httpStreams, season, episode);
   logger.info(`Fetched ${streams.length} streams for ${imdbId}`, {
     debrid: debridResults.filter((r) => r.cached).length,
     http: httpStreams.length,
@@ -206,6 +211,18 @@ function backgroundRefresh(meta: StreamMeta, cacheKey: string): void {
     .catch((err) => logger.error('Background refresh failed', { cacheKey, err: err.message }))
     .finally(() => refreshing.delete(cacheKey));
 }
+
+function backgroundExternalRefresh(meta: StreamMeta, cacheKey: string, baseStreams: Stream[]): void {
+  getExternalAddonStreams(meta)
+    .then(async (externalStreams) => {
+      if (!externalStreams.length) return;
+      const merged = cleanStreams([...baseStreams, ...externalStreams]);
+      await cacheSet(cacheKey, merged, STREAM_HARD_TTL);
+      logger.info(`Background external streams added: ${externalStreams.length}`, { cacheKey });
+    })
+    .catch((err) => logger.warn('Background external refresh failed', { cacheKey, err: err.message }));
+}
+
 
 /**
  * Main entry point: get streams for a piece of content.
@@ -237,6 +254,7 @@ export async function getStreams(meta: StreamMeta): Promise<Stream[]> {
   const freshStreams = await fetchFreshStreams(meta);
   if (freshStreams.length > 0) {
     await cacheSet(cacheKey, freshStreams, STREAM_HARD_TTL);
+    backgroundExternalRefresh(meta, cacheKey, freshStreams);
   }
   return freshStreams;
 }
