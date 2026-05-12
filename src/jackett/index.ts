@@ -13,7 +13,7 @@ interface JackettItem {
   Guid: string;
 }
 
-async function getTitleFromTmdb(imdbId: string, type: 'movie' | 'series'): Promise<string | null> {
+export async function getTitleFromTmdb(imdbId: string, type: 'movie' | 'series'): Promise<string | null> {
   const apiKey = process.env.TMDB_API_KEY;
   if (!apiKey) return null;
   try {

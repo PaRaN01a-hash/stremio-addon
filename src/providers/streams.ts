@@ -2,6 +2,7 @@
 import { Stream, StreamMeta, HttpStream } from '../types';
 import { cacheGet, cacheSet, CacheKeys } from '../cache/redis';
 import { searchJackett } from '../jackett';
+import { searchZilean } from '../zilean';
 import { resolveDebrid } from '../torbox';
 import { getHttpFallbackStreams } from '../http-fallback';
 import { buildStreamTitle } from '../utils/quality';
@@ -163,11 +164,21 @@ async function fetchFreshStreams(meta: StreamMeta): Promise<Stream[]> {
   const { imdbId, type, season, episode } = meta;
 
   // Run internal providers + bridged addons in parallel
-  const [torrents, httpStreams, externalStreams] = await Promise.all([
+  const [zileanTorrents, jackettTorrents, httpStreams, externalStreams] = await Promise.all([
+    searchZilean(meta),
     searchJackett(imdbId, type, season, episode),
     getHttpFallbackStreams(imdbId, season, episode),
     getExternalAddonStreams(meta),
   ]);
+
+  // Zilean/DMM first, Jackett as fallback. Dedup by infoHash before TorBox check.
+  const seenHashes = new Set<string>();
+  const torrents = [...zileanTorrents, ...jackettTorrents].filter((torrent) => {
+    const hash = torrent.infoHash?.toLowerCase();
+    if (!hash || seenHashes.has(hash)) return false;
+    seenHashes.add(hash);
+    return true;
+  });
 
   // Resolve torrents through TorBox
   const debridResults = await resolveDebrid(torrents, season, episode);
