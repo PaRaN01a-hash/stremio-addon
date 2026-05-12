@@ -1,5 +1,15 @@
 // src/server.ts
 import express, { Request, Response } from 'express';
+
+(globalThis as any).streamStats = {
+  requests: 0,
+  cacheHits: 0,
+  cacheMisses: 0,
+  zileanMs: 0,
+  torboxMs: 0,
+  externalMs: 0,
+  lastRequest: null,
+};
 import { manifest, streamHandler } from './addon';
 import { logger } from './utils/logger';
 import { getDebridStreamUrlByHash } from './torbox';
@@ -86,6 +96,7 @@ export function createServer(): express.Application {
         zileanMaxResults: process.env.ZILEAN_MAX_RESULTS || 'unknown',
         resolveCacheTTL: process.env.CACHE_TTL_RESOLVE || 'unknown',
       },
+      runtime: (globalThis as any).streamStats || {},
     });
   });
 

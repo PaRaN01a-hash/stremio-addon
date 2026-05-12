@@ -257,6 +257,9 @@ async function fetchFreshStreams(meta: StreamMeta): Promise<Stream[]> {
     searchZilean(meta),
     getHttpFallbackStreams(imdbId, season, episode),
   ]);
+  if ((globalThis as any).streamStats) {
+    (globalThis as any).streamStats.zileanMs = msSince(providerStart);
+  }
   logger.info('Provider fast path complete', {
     imdbId,
     ms: msSince(providerStart),
@@ -281,6 +284,9 @@ async function fetchFreshStreams(meta: StreamMeta): Promise<Stream[]> {
   // Resolve torrents through TorBox
   const torboxStart = Date.now();
   const debridResults = await resolveDebrid(torrents, season, episode);
+  if ((globalThis as any).streamStats) {
+    (globalThis as any).streamStats.torboxMs = msSince(torboxStart);
+  }
   logger.info('TorBox resolveDebrid complete', {
     imdbId,
     ms: msSince(torboxStart),
@@ -317,6 +323,11 @@ function backgroundExternalRefresh(meta: StreamMeta, cacheKey: string, baseStrea
       if (!externalStreams.length) return;
       const merged = cleanStreams([...baseStreams, ...externalStreams]);
       await cacheSet(cacheKey, merged, STREAM_HARD_TTL);
+      if ((globalThis as any).streamStats) {
+        (globalThis as any).streamStats.externalRefreshes =
+          ((globalThis as any).streamStats.externalRefreshes || 0) + 1;
+        (globalThis as any).streamStats.externalLastCount = externalStreams.length;
+      }
       logger.info(`Background external streams added: ${externalStreams.length}`, { cacheKey });
     })
     .catch((err) => logger.warn('Background external refresh failed', { cacheKey, err: err.message }));
@@ -334,12 +345,19 @@ function backgroundExternalRefresh(meta: StreamMeta, cacheKey: string, baseStrea
  * 2. On next request after background refresh → full debrid streams served instantly.
  */
 export async function getStreams(meta: StreamMeta): Promise<Stream[]> {
+  const stats = (globalThis as any).streamStats;
+  if (stats) {
+    stats.requests++;
+    stats.lastRequest = new Date().toISOString();
+  }
+
   const { imdbId, season, episode } = meta;
   const cacheKey = CacheKeys.streams(imdbId, season, episode);
 
   const { value: cached, stale } = await cacheGet<Stream[]>(cacheKey, STREAM_SOFT_TTL, STREAM_HARD_TTL);
 
   if (cached !== null) {
+    if (stats) stats.cacheHits++;
     logger.info('Stream cache hit', { cacheKey, stale, count: cached.length });
     if (stale) {
       logger.debug('Serving stale cache, refreshing in background', { cacheKey });
@@ -350,6 +368,7 @@ export async function getStreams(meta: StreamMeta): Promise<Stream[]> {
 
   // Cache miss — fetch full lazy TorBox stream list now.
   // This is slower on the first request, but avoids returning an empty list.
+  if (stats) stats.cacheMisses++;
   logger.info('Cache miss, fetching fresh lazy streams', { imdbId });
   const freshStreams = await fetchFreshStreams(meta);
   if (freshStreams.length > 0) {
