@@ -24,8 +24,139 @@ function lazyTorBoxUrl(hash: string, season?: number, episode?: number): string 
   return url.toString();
 }
 
+function streamText(stream: Stream): string {
+  const anyStream = stream as any;
+  return [
+    stream.name || '',
+    stream.title || '',
+    anyStream.description || '',
+    anyStream.behaviorHints?.filename || '',
+    stream.url || '',
+  ].join(' ').toLowerCase();
+}
+
+function streamSize(stream: Stream): number {
+  const anyStream = stream as any;
+  return Number(anyStream.behaviorHints?.videoSize || 0);
+}
+
+function streamKey(stream: Stream): string {
+  const anyStream = stream as any;
+  const text = streamText(stream);
+  const binge = anyStream.behaviorHints?.bingeGroup || '';
+  const filename = anyStream.behaviorHints?.filename || '';
+  const hashMatch = `${binge} ${stream.url || ''}`.match(/[a-f0-9]{40}/i);
+
+  if (hashMatch) return `hash:${hashMatch[0].toLowerCase()}`;
+  if (filename) return `file:${String(filename).toLowerCase().replace(/[^a-z0-9]+/g, '')}`;
+
+  const size = streamSize(stream);
+  if (size > 0) return `name:${text.replace(/[^a-z0-9]+/g, '')}:size:${Math.round(size / 50000000)}`;
+
+  return `url:${stream.url || text}`;
+}
+
+function scoreStream(stream: Stream): number {
+  const text = streamText(stream);
+  const size = streamSize(stream);
+  let score = 0;
+
+  if (text.includes('[torbox]')) score += 1000;
+  if (text.includes('zilean-dmm')) score += 450;
+  if (text.includes('comet')) score += 250;
+  if (text.includes('hdhub')) score += 80;
+
+  if (text.includes('2160p') || text.includes('4k')) score += 180;
+  if (text.includes('1080p')) score += 160;
+  if (text.includes('720p')) score += 90;
+
+  if (text.includes('web-dl')) score += 120;
+  if (text.includes('web')) score += 70;
+  if (text.includes('bluray') || text.includes('blu-ray')) score += 90;
+
+  if (text.includes('hevc') || text.includes('x265')) score += 80;
+  if (text.includes('h 265') || text.includes('h265')) score += 70;
+  if (text.includes('avc') || text.includes('x264') || text.includes('h264') || text.includes('h 264')) score += 35;
+
+  if (text.includes('hdr')) score += 35;
+  if (text.includes('truehd')) score += 25;
+  if (text.includes('ddp') || text.includes('dolby digital plus')) score += 20;
+
+  if (text.includes('cam') || text.includes('hdcam') || text.includes('ts ') || text.includes('telesync')) score -= 1000;
+  if (text.includes('scr') || text.includes('screener')) score -= 500;
+  if (text.includes('dv') || text.includes('dovi') || text.includes('dolby vision')) score -= 80;
+  if (text.includes('remux')) score -= 120;
+
+  // Keep sizes sane. Reward useful sweet spots, punish monsters and tiny junk.
+  const gb = size / 1024 / 1024 / 1024;
+  if (gb > 0) {
+    const is4k = text.includes('2160p') || text.includes('4k');
+    const is1080 = text.includes('1080p');
+    const is720 = text.includes('720p');
+
+    if (is4k) {
+      if (gb >= 5 && gb <= 12) score += 180;
+      else if (gb > 12 && gb <= 18) score += 60;
+      else if (gb > 18) score -= 250;
+      else if (gb < 3) score -= 120;
+    } else if (is1080) {
+      if (gb >= 1.5 && gb <= 6) score += 180;
+      else if (gb > 6 && gb <= 10) score += 60;
+      else if (gb > 10) score -= 220;
+      else if (gb < 1) score -= 90;
+    } else if (is720) {
+      if (gb >= 0.6 && gb <= 3) score += 140;
+      else if (gb > 5) score -= 180;
+      else if (gb < 0.35) score -= 120;
+    } else {
+      if (gb >= 1 && gb <= 8) score += 80;
+      else if (gb > 20) score -= 250;
+      else if (gb < 0.35) score -= 200;
+    }
+  }
+
+  const seedMatch = text.match(/👥\s*(\d+)/);
+  if (seedMatch) score += Math.min(Number(seedMatch[1] || 0), 200);
+
+  return score;
+}
+
+function cleanStreams(streams: Stream[]): Stream[] {
+  const blocked = streams.filter((stream) => {
+    const text = streamText(stream);
+    return !(
+      text.includes('comet sync') ||
+      text.includes('debrid-sync') ||
+      String(stream.url || '').includes('/debrid-sync/')
+    );
+  });
+
+  const byKey = new Map<string, Stream>();
+
+  for (const stream of blocked) {
+    const key = streamKey(stream);
+    const existing = byKey.get(key);
+
+    if (!existing || scoreStream(stream) > scoreStream(existing)) {
+      byKey.set(key, stream);
+    }
+  }
+
+  return [...byKey.values()]
+    .sort((a, b) => scoreStream(b) - scoreStream(a))
+    .slice(0, parseInt(process.env.MAX_FINAL_STREAMS || '25'));
+}
+
+
+
 // Tracks in-flight background refreshes so we don't pile them up
 const refreshing = new Set<string>();
+
+function msSince(start: number): number {
+  return Date.now() - start;
+}
+
+
 
 function extractHash(stream: Stream): string | null {
   const haystack = [
@@ -64,52 +195,6 @@ function qualityScore(stream: Stream): number {
   return score;
 }
 
-function cleanStreams(streams: Stream[]): Stream[] {
-  const seen = new Set<string>();
-
-  const deduped = streams.filter((stream) => {
-    const text = `${stream.name || ''} ${stream.title || ''} ${String((stream as any).description || '')}`.toLowerCase();
-
-    // Remove utility/control streams that are not actual playable media
-    if (
-      text.includes('sync debrid') ||
-      text.includes('comet sync') ||
-      text.includes('debrid-sync') ||
-      text.includes('debrid account library') ||
-      text.includes('select this stream') ||
-      String(stream.url || '').includes('/debrid-sync/')
-    ) {
-      return false;
-    }
-
-    const hash = extractHash(stream);
-    const key = hash || `${stream.name}|${stream.title}|${stream.url}`;
-
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-
-  return deduped
-    .filter((stream) => {
-      const text = [
-        stream.name || '',
-        stream.title || '',
-        String((stream as any).description || ''),
-        stream.url || '',
-      ].join(' ').toLowerCase();
-
-      return !(
-        text.includes('comet sync') ||
-        text.includes('sync debrid') ||
-        text.includes('debrid-sync') ||
-        text.includes('debrid account library') ||
-        text.includes('select this stream')
-      );
-    })
-    .sort((a, b) => qualityScore(b) - qualityScore(a))
-    .slice(0, 25);
-}
 
 
 /**
@@ -123,7 +208,6 @@ function buildStreams(
 ): Stream[] {
   const streams: Stream[] = [];
 
-  // 1. Debrid streams (best quality, fastest)
   for (const result of debridResults) {
     if (!result.cached) continue;
     const { torrent } = result;
@@ -143,7 +227,6 @@ function buildStreams(
     });
   }
 
-  // 2. HTTP fallback streams
   for (const http of httpStreams) {
     streams.push({
       name: `[HTTP] ${http.name}`,
@@ -156,22 +239,30 @@ function buildStreams(
     });
   }
 
-  return cleanStreams(streams);
+  return streams;
 }
 
 /**
  * Fetch fresh streams from all providers (Jackett → TorBox + HTTP fallback).
  */
 async function fetchFreshStreams(meta: StreamMeta): Promise<Stream[]> {
+  const started = Date.now();
   const { imdbId, type, season, episode } = meta;
 
   // Run internal providers + bridged addons in parallel
   // Fast path: do NOT wait for external addons on cold load.
   // Zilean/TorBox returns first; Comet/HDHub can be added by background refresh.
+  const providerStart = Date.now();
   const [zileanTorrents, httpStreams] = await Promise.all([
     searchZilean(meta),
     getHttpFallbackStreams(imdbId, season, episode),
   ]);
+  logger.info('Provider fast path complete', {
+    imdbId,
+    ms: msSince(providerStart),
+    zilean: zileanTorrents.length,
+    http: httpStreams.length,
+  });
 
   const minZilean = parseInt(process.env.ZILEAN_MIN_RESULTS_BEFORE_JACKETT || '20');
   const jackettTorrents = zileanTorrents.length >= minZilean
@@ -188,12 +279,20 @@ async function fetchFreshStreams(meta: StreamMeta): Promise<Stream[]> {
   });
 
   // Resolve torrents through TorBox
+  const torboxStart = Date.now();
   const debridResults = await resolveDebrid(torrents, season, episode);
+  logger.info('TorBox resolveDebrid complete', {
+    imdbId,
+    ms: msSince(torboxStart),
+    torrents: torrents.length,
+    cached: debridResults.filter((r) => r.cached).length,
+  });
 
-  const streams = buildStreams(debridResults, httpStreams, season, episode);
+  const streams = cleanStreams(buildStreams(debridResults, httpStreams, season, episode));
   logger.info(`Fetched ${streams.length} streams for ${imdbId}`, {
     debrid: debridResults.filter((r) => r.cached).length,
     http: httpStreams.length,
+    totalMs: msSince(started),
   });
 
   return streams;
@@ -241,11 +340,12 @@ export async function getStreams(meta: StreamMeta): Promise<Stream[]> {
   const { value: cached, stale } = await cacheGet<Stream[]>(cacheKey, STREAM_SOFT_TTL, STREAM_HARD_TTL);
 
   if (cached !== null) {
+    logger.info('Stream cache hit', { cacheKey, stale, count: cached.length });
     if (stale) {
       logger.debug('Serving stale cache, refreshing in background', { cacheKey });
       backgroundRefresh(meta, cacheKey);
     }
-    return cached;
+    return cleanStreams(cached);
   }
 
   // Cache miss — fetch full lazy TorBox stream list now.
