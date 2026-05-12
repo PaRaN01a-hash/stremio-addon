@@ -279,7 +279,16 @@ export async function getDebridStreamUrlByHash(
   season?: number,
   episode?: number
 ): Promise<string | null> {
-  return getDebridStreamUrl(
+  const key = `resolve:${hash}:${season ?? 'x'}:${episode ?? 'x'}`;
+  const ttl = parseInt(process.env.CACHE_TTL_RESOLVE || '900');
+
+  const { value: cached } = await cacheGet<string>(key, ttl, ttl * 2);
+  if (cached) {
+    logger.info('TorBox resolve cache hit', { hash, season, episode });
+    return cached;
+  }
+
+  const url = await getDebridStreamUrl(
     {
       title: `Lazy resolve ${hash}`,
       infoHash: hash,
@@ -292,6 +301,12 @@ export async function getDebridStreamUrlByHash(
     season,
     episode
   );
+
+  if (url) {
+    await cacheSet(key, url, ttl);
+  }
+
+  return url;
 }
 
 export async function autoCache(torrent: TorrentResult): Promise<void> {
