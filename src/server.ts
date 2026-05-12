@@ -13,6 +13,7 @@ import express, { Request, Response } from 'express';
 import { manifest, streamHandler } from './addon';
 import { logger } from './utils/logger';
 import { getDebridStreamUrlByHash } from './torbox';
+import { getStreams } from './providers/streams';
 
 export function createServer(): express.Application {
   const app = express();
@@ -84,6 +85,52 @@ export function createServer(): express.Application {
 
 
   // Lightweight stats endpoint
+  app.get('/debug/streams/:type/:id.json', async (req: Request, res: Response) => {
+    try {
+      const type = req.params.type as 'movie' | 'series';
+      const rawId = req.params.id;
+
+      const parts = rawId.split(':');
+      const imdbId = parts[0];
+      const season = parts[1] ? parseInt(parts[1], 10) : undefined;
+      const episode = parts[2] ? parseInt(parts[2], 10) : undefined;
+
+      const started = Date.now();
+
+      const streams = await getStreams({
+        id: rawId,
+        imdbId,
+        type,
+        season,
+        episode,
+      });
+
+      res.json({
+        status: 'ok',
+        tookMs: Date.now() - started,
+        request: { type, id: rawId, imdbId, season, episode },
+        count: streams.length,
+        streams: streams.map((stream: any, index: number) => ({
+          index: index + 1,
+          name: stream.name,
+          title: stream.title,
+          description: stream.description,
+          urlHost: (() => {
+            try { return new URL(stream.url).host; } catch { return null; }
+          })(),
+          bingeGroup: stream.behaviorHints?.bingeGroup,
+          filename: stream.behaviorHints?.filename,
+          videoSize: stream.behaviorHints?.videoSize,
+        })),
+      });
+    } catch (err: any) {
+      res.status(500).json({
+        status: 'error',
+        error: err.message || 'debug_streams_failed',
+      });
+    }
+  });
+
   app.get('/stats', (_req: Request, res: Response) => {
     res.json({
       status: 'ok',

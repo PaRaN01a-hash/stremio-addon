@@ -11,6 +11,9 @@ import { getExternalAddonStreams } from './external-addons';
 import {
   filterStreams,
   sortStreams,
+  dedupeStreams,
+  capStreamsPerQuality,
+  capStreamsPerProvider,
   NormalizedStream
 } from '../streams';
 
@@ -330,7 +333,10 @@ const normalized: NormalizedStream[] = streams.map((s: any) => ({
 }));
 
 const filtered = filterStreams(normalized);
-const sorted = sortStreams(filtered);
+const deduped = dedupeStreams(filtered);
+const providerCapped = capStreamsPerProvider(deduped);
+const capped = capStreamsPerQuality(providerCapped);
+const sorted = sortStreams(capped);
 
 return sorted.map(s => s.raw);
 
