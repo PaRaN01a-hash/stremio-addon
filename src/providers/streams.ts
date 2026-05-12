@@ -6,9 +6,22 @@ import { resolveDebrid } from '../torbox';
 import { getHttpFallbackStreams } from '../http-fallback';
 import { buildStreamTitle } from '../utils/quality';
 import { logger } from '../utils/logger';
+import { getExternalAddonStreams } from './external-addons';
 
 const STREAM_SOFT_TTL = parseInt(process.env.CACHE_TTL_STREAMS || '1800');
 const STREAM_HARD_TTL = STREAM_SOFT_TTL * 4; // Keep in Redis 4x longer than soft TTL
+
+function publicBaseUrl(): string {
+  return (process.env.PUBLIC_BASE_URL || process.env.BASE_URL || 'http://localhost:6000').replace(/\/$/, '');
+}
+
+function lazyTorBoxUrl(hash: string, season?: number, episode?: number): string {
+  const url = new URL('/resolve', publicBaseUrl());
+  url.searchParams.set('hash', hash);
+  if (season !== undefined) url.searchParams.set('season', String(season));
+  if (episode !== undefined) url.searchParams.set('episode', String(episode));
+  return url.toString();
+}
 
 // Tracks in-flight background refreshes so we don't pile them up
 const refreshing = new Set<string>();
@@ -24,7 +37,7 @@ function buildStreams(
 
   // 1. Debrid streams (best quality, fastest)
   for (const result of debridResults) {
-    if (!result.cached || !result.streamUrl) continue;
+    if (!result.cached) continue;
     const { torrent } = result;
 
     streams.push({
@@ -37,7 +50,7 @@ function buildStreams(
         torrent.hdr || false,
         torrent.dolbyVision || false
       ),
-      url: result.streamUrl,
+      url: lazyTorBoxUrl(torrent.infoHash),
       behaviorHints: { bingeGroup: `torbox-${torrent.quality}` },
     });
   }
@@ -64,16 +77,17 @@ function buildStreams(
 async function fetchFreshStreams(meta: StreamMeta): Promise<Stream[]> {
   const { imdbId, type, season, episode } = meta;
 
-  // Run Jackett + HTTP fallback in parallel
-  const [torrents, httpStreams] = await Promise.all([
+  // Run internal providers + bridged addons in parallel
+  const [torrents, httpStreams, externalStreams] = await Promise.all([
     searchJackett(imdbId, type, season, episode),
     getHttpFallbackStreams(imdbId, season, episode),
+    getExternalAddonStreams(meta),
   ]);
 
   // Resolve torrents through TorBox
   const debridResults = await resolveDebrid(torrents, season, episode);
 
-  const streams = buildStreams(debridResults, httpStreams);
+  const streams = [...buildStreams(debridResults, httpStreams), ...externalStreams];
   logger.info(`Fetched ${streams.length} streams for ${imdbId}`, {
     debrid: debridResults.filter((r) => r.cached).length,
     http: httpStreams.length,
@@ -119,21 +133,12 @@ export async function getStreams(meta: StreamMeta): Promise<Stream[]> {
     return cached;
   }
 
-  // Cache miss — serve HTTP fallback streams immediately for responsiveness
-  logger.info('Cache miss, fetching HTTP fallback immediately', { imdbId });
-  const httpStreams = await getHttpFallbackStreams(imdbId, season, episode);
-  const immediateStreams = httpStreams.map((http): Stream => ({
-    name: `[HTTP] ${http.name}`,
-    title: `${http.quality} · ${http.source}`,
-    url: http.url,
-    behaviorHints: {
-      notWebReady: false,
-      proxyHeaders: http.headers ? { request: http.headers } : undefined,
-    },
-  }));
-
-  // Trigger full fetch (Jackett + TorBox) in background; next request will be instant
-  backgroundRefresh(meta, cacheKey);
-
-  return immediateStreams;
+  // Cache miss — fetch full lazy TorBox stream list now.
+  // This is slower on the first request, but avoids returning an empty list.
+  logger.info('Cache miss, fetching fresh lazy streams', { imdbId });
+  const freshStreams = await fetchFreshStreams(meta);
+  if (freshStreams.length > 0) {
+    await cacheSet(cacheKey, freshStreams, STREAM_HARD_TTL);
+  }
+  return freshStreams;
 }

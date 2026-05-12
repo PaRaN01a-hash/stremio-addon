@@ -61,15 +61,20 @@ export async function getDebridStreamUrl(
 ): Promise<string | null> {
   try {
     // First add/create the torrent so TorBox gives us a torrent_id.
+    const form = new URLSearchParams();
+    form.append('magnet', torrent.magnetUrl || `magnet:?xt=urn:btih:${torrent.infoHash}`);
+    form.append('seed', '1');
+    form.append('allow_zip', 'false');
+    form.append('add_only_if_cached', 'true');
+
     const create = await axios.post(
       `${BASE_URL}/torrents/createtorrent`,
+      form,
       {
-        magnet: torrent.magnetUrl || `magnet:?xt=urn:btih:${torrent.infoHash}`,
-        seed: 1,
-        allow_zip: false,
-      },
-      {
-        headers: { Authorization: `Bearer ${getKey()}` },
+        headers: {
+          Authorization: `Bearer ${getKey()}`,
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
         timeout: 15000,
       }
     );
@@ -131,6 +136,27 @@ export async function getDebridStreamUrl(
   }
 }
 
+
+export async function getDebridStreamUrlByHash(
+  hash: string,
+  season?: number,
+  episode?: number
+): Promise<string | null> {
+  return getDebridStreamUrl(
+    {
+      title: `Lazy resolve ${hash}`,
+      infoHash: hash,
+      magnetUrl: `magnet:?xt=urn:btih:${hash}`,
+      size: 0,
+      seeders: 0,
+      quality: 'Unknown',
+      source: 'TorBox',
+    } as TorrentResult,
+    season,
+    episode
+  );
+}
+
 export async function autoCache(torrent: TorrentResult): Promise<void> {
   if (process.env.TORBOX_AUTO_CACHE !== 'true') return;
   if (!torrent.magnetUrl && !torrent.infoHash) return;
@@ -166,16 +192,40 @@ export async function resolveDebrid(
   const concurrency = parseInt(process.env.TORBOX_AUTO_CACHE_CONCURRENCY || '3');
   uncachedTorrents.slice(0, concurrency).forEach((t) => autoCache(t));
 
-  // Only get stream URLs for TOP 3 cached torrents to avoid rate limiting
-  const top3 = cachedTorrents.slice(0, 3);
-  const limit = pLimit(2); // max 2 concurrent requestdl calls
+  const maxSizeGb = parseFloat(process.env.TORBOX_MAX_SIZE_GB || '25');
+  const maxStreams = parseInt(process.env.TORBOX_MAX_STREAMS || '8');
+  const maxSizeBytes = maxSizeGb * 1024 * 1024 * 1024;
+
+  const filteredCachedTorrents = cachedTorrents.filter((torrent) => {
+    const title = (torrent.title || '').toLowerCase();
+
+    // Avoid formats that often fail on TVs/Nuvio/Stremio players
+    if (
+      title.includes('dolby vision') ||
+      title.includes('dovi') ||
+      title.includes(' dv ') ||
+      title.includes('.dv.') ||
+      title.includes('remux')
+    ) {
+      return false;
+    }
+
+    if (!torrent.size || torrent.size <= 0) return true;
+    return torrent.size <= maxSizeBytes;
+  });
+
+  logger.info(
+    `TorBox: ${filteredCachedTorrents.length}/${cachedTorrents.length} cached torrents under ${maxSizeGb}GB`
+  );
+
+  // Get more streams, but avoid huge remux files and API hammering
+  const top3 = filteredCachedTorrents.slice(0, maxStreams);
   const results = await Promise.all(
-    top3.map((torrent) =>
-      limit(async (): Promise<DebridResult> => {
-        const streamUrl = await getDebridStreamUrl(torrent, season, episode);
-        return { cached: true, streamUrl: streamUrl || undefined, torrent };
-      })
-    )
+    top3.map((torrent): DebridResult => ({
+      cached: true,
+      streamUrl: `lazy:${torrent.infoHash}`,
+      torrent,
+    }))
   );
 
   const uncachedResults: DebridResult[] = uncachedTorrents.map((t) => ({

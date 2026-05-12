@@ -2,6 +2,7 @@
 import express, { Request, Response } from 'express';
 import { manifest, streamHandler } from './addon';
 import { logger } from './utils/logger';
+import { getDebridStreamUrlByHash } from './torbox';
 
 export function createServer(): express.Application {
   const app = express();
@@ -38,6 +39,31 @@ export function createServer(): express.Application {
     } catch (err: any) {
       logger.error('Stream handler error', { type, id, err: err.message });
       res.status(500).json({ streams: [] });
+    }
+  });
+
+
+  // Lazy TorBox resolver: only asks TorBox for a playable URL when the user presses play.
+  app.get('/resolve', async (req: Request, res: Response) => {
+    try {
+      const hash = String(req.query.hash || '').trim().toLowerCase();
+      const season = req.query.season !== undefined ? Number(req.query.season) : undefined;
+      const episode = req.query.episode !== undefined ? Number(req.query.episode) : undefined;
+
+      if (!/^[a-f0-9]{40}$/.test(hash)) {
+        return res.status(400).send('Invalid hash');
+      }
+
+      const freshUrl = await getDebridStreamUrlByHash(hash, season, episode);
+
+      if (!freshUrl) {
+        return res.status(404).send('Could not resolve stream');
+      }
+
+      return res.redirect(302, freshUrl);
+    } catch (err: any) {
+      logger.error('Lazy resolve failed', { err: err.message });
+      return res.status(500).send('Resolve failed');
     }
   });
 
