@@ -11,10 +11,13 @@ export interface StreamMeta {
 export interface Stream {
   name: string;         // Provider label shown in UI
   title: string;        // Detail line: quality, size, source
+  description?: string;
   url: string;          // Direct URL or debrid link
   behaviorHints?: {
     bingeGroup?: string;
     notWebReady?: boolean;
+    filename?: string;
+    videoSize?: number;
     proxyHeaders?: {
       request?: Record<string, string>;
     };

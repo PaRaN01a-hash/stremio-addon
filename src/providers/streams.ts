@@ -8,6 +8,11 @@ import { getHttpFallbackStreams } from '../http-fallback';
 import { buildStreamTitle } from '../utils/quality';
 import { logger } from '../utils/logger';
 import { getExternalAddonStreams } from './external-addons';
+import {
+  filterStreams,
+  sortStreams,
+  NormalizedStream
+} from '../streams';
 
 const STREAM_SOFT_TTL = parseInt(process.env.CACHE_TTL_STREAMS || '1800');
 const STREAM_HARD_TTL = STREAM_SOFT_TTL * 4; // Keep in Redis 4x longer than soft TTL
@@ -22,6 +27,15 @@ function lazyTorBoxUrl(hash: string, season?: number, episode?: number): string 
   if (season !== undefined) url.searchParams.set('season', String(season));
   if (episode !== undefined) url.searchParams.set('episode', String(episode));
   return url.toString();
+}
+
+
+function formatBytes(bytes: number): string {
+  if (!bytes || bytes <= 0) return 'Unknown';
+  const gb = bytes / 1024 / 1024 / 1024;
+  if (gb >= 1) return `${gb.toFixed(2)} GB`;
+  const mb = bytes / 1024 / 1024;
+  return `${Math.round(mb)} MB`;
 }
 
 function streamText(stream: Stream): string {
@@ -212,18 +226,48 @@ function buildStreams(
     if (!result.cached) continue;
     const { torrent } = result;
 
+    const releaseTitle = (torrent.title || 'Unknown release').replace(/\s+/g, ' ').trim();
+    const titleUpper = releaseTitle.toUpperCase();
+
+    const tags = [
+      torrent.dolbyVision || titleUpper.includes('DOLBY VISION') || titleUpper.includes('DOVI') ? 'DV' : '',
+      torrent.hdr || titleUpper.includes('HDR') ? 'HDR' : '',
+      titleUpper.includes('REMUX') ? 'REMUX' : '',
+      titleUpper.includes('WEB-DL') ? 'WEB-DL' : '',
+      titleUpper.includes('BLURAY') || titleUpper.includes('BLU-RAY') ? 'BluRay' : '',
+      titleUpper.includes('X265') || titleUpper.includes('H265') || titleUpper.includes('HEVC') ? 'x265' : '',
+      titleUpper.includes('X264') || titleUpper.includes('H264') || titleUpper.includes('AVC') ? 'x264' : '',
+      titleUpper.includes('ATMOS') ? 'Atmos' : '',
+      titleUpper.includes('TRUEHD') ? 'TrueHD' : '',
+      titleUpper.includes('EAC3') || titleUpper.includes('DDP') ? 'EAC3' : '',
+    ].filter(Boolean);
+
+    const badge = '[TB+]';
+    const featureText = tags.slice(0, 3).join(' ');
+    const release =
+      releaseTitle.match(/-([A-Za-z0-9]+)(?:\s*(?:mkv|mp4|avi))?$/i)?.[1] ||
+      releaseTitle.match(/\[([A-Za-z0-9]+)\]/)?.[1] ||
+      releaseTitle.match(/\b([A-Za-z0-9]{2,20})\s+(?:mkv|mp4|avi)$/i)?.[1] ||
+      torrent.source ||
+      'Scene';
+
+    const weakRelease = ['com', 'net', 'org', 'mkv', 'mp4', 'avi', 'www'].includes(String(release).toLowerCase());
+    const cleanRelease = weakRelease ? (torrent.source || 'Scene') : release;
+
+    const streamName = `${badge} ${torrent.quality} • ${cleanRelease}${featureText ? ' • ' + featureText : ''}`;
+
+    const sourceLine = `${torrent.source || 'Unknown'}${torrent.source === 'Zilean-DMM' ? ' Lazy Movie | zilean_dmm' : ''}`;
+
     streams.push({
-      name: `[TorBox] ${torrent.quality}${torrent.dolbyVision ? ' DV' : torrent.hdr ? ' HDR' : ''}`,
-      title: buildStreamTitle(
-        torrent.quality,
-        torrent.size,
-        torrent.seeders,
-        torrent.source,
-        torrent.hdr || false,
-        torrent.dolbyVision || false
-      ),
+      name: streamName,
+      title: releaseTitle,
+      description: `${sourceLine}\nSIZE ${formatBytes(torrent.size)}${torrent.seeders ? ` · 👥 ${torrent.seeders}` : ''}`,
       url: lazyTorBoxUrl(torrent.infoHash, season, episode),
-      behaviorHints: { bingeGroup: `torbox-${torrent.quality}` },
+      behaviorHints: {
+        bingeGroup: `tbplus-${torrent.quality}-${cleanRelease}-${torrent.infoHash}`,
+        filename: releaseTitle,
+        videoSize: torrent.size || undefined,
+      },
     });
   }
 
@@ -239,7 +283,57 @@ function buildStreams(
     });
   }
 
-  return streams;
+  
+const normalized: NormalizedStream[] = streams.map((s: any) => ({
+  id: s.url,
+
+  provider: 'maximus',
+  source: s.name || 'unknown',
+
+  title: s.title || '',
+  releaseGroup: s.behaviorHints?.filename || '',
+
+  infoHash: '',
+
+  url: s.url,
+
+  quality:
+    s.name?.includes('4K') ? '4K' :
+    s.name?.includes('1080') ? '1080p' :
+    s.name?.includes('720') ? '720p' :
+    'Unknown',
+
+  codec:
+    s.title?.includes('x265') ? 'x265' :
+    s.title?.includes('x264') ? 'x264' :
+    undefined,
+
+  hdr:
+    s.name?.includes('HDR') ||
+    s.title?.includes('HDR'),
+
+  dolbyVision:
+    s.name?.includes('DV') ||
+    s.title?.includes('DV'),
+
+  size:
+    s.behaviorHints?.videoSize || 0,
+
+  seeders: 0,
+
+  cached: true,
+
+  bingeGroup:
+    s.behaviorHints?.bingeGroup,
+
+  raw: s
+}));
+
+const filtered = filterStreams(normalized);
+const sorted = sortStreams(filtered);
+
+return sorted.map(s => s.raw);
+
 }
 
 /**
