@@ -26,6 +26,91 @@ function lazyTorBoxUrl(hash: string, season?: number, episode?: number): string 
 // Tracks in-flight background refreshes so we don't pile them up
 const refreshing = new Set<string>();
 
+function extractHash(stream: Stream): string | null {
+  const haystack = [
+    stream.url || '',
+    stream.name || '',
+    stream.title || '',
+    (stream as any).description || '',
+    stream.behaviorHints?.bingeGroup || '',
+    (stream.behaviorHints as any)?.filename || '',
+  ].join(' ');
+
+  const match = haystack.match(/([a-f0-9]{40})/i);
+  return match ? match[1].toLowerCase() : null;
+}
+
+function qualityScore(stream: Stream): number {
+  const text = `${stream.name} ${stream.title}`.toLowerCase();
+  let score = 0;
+
+  if (text.includes('4k') || text.includes('2160')) score += 400;
+  else if (text.includes('1080')) score += 250;
+  else if (text.includes('720')) score += 100;
+
+  if (text.includes('hdr')) score += 40;
+  if (text.includes('dv')) score -= 50;
+  if (text.includes('remux')) score -= 100;
+
+  const sizeMatch = text.match(/(\d+(?:\.\d+)?)\s*gb/i);
+  if (sizeMatch) {
+    const gb = parseFloat(sizeMatch[1]);
+    if (gb >= 2 && gb <= 12) score += 60;
+    if (gb > 30) score -= 150;
+    else if (gb > 20) score -= 80;
+  }
+
+  return score;
+}
+
+function cleanStreams(streams: Stream[]): Stream[] {
+  const seen = new Set<string>();
+
+  const deduped = streams.filter((stream) => {
+    const text = `${stream.name || ''} ${stream.title || ''} ${String((stream as any).description || '')}`.toLowerCase();
+
+    // Remove utility/control streams that are not actual playable media
+    if (
+      text.includes('sync debrid') ||
+      text.includes('comet sync') ||
+      text.includes('debrid-sync') ||
+      text.includes('debrid account library') ||
+      text.includes('select this stream') ||
+      String(stream.url || '').includes('/debrid-sync/')
+    ) {
+      return false;
+    }
+
+    const hash = extractHash(stream);
+    const key = hash || `${stream.name}|${stream.title}|${stream.url}`;
+
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  return deduped
+    .filter((stream) => {
+      const text = [
+        stream.name || '',
+        stream.title || '',
+        String((stream as any).description || ''),
+        stream.url || '',
+      ].join(' ').toLowerCase();
+
+      return !(
+        text.includes('comet sync') ||
+        text.includes('sync debrid') ||
+        text.includes('debrid-sync') ||
+        text.includes('debrid account library') ||
+        text.includes('select this stream')
+      );
+    })
+    .sort((a, b) => qualityScore(b) - qualityScore(a))
+    .slice(0, 25);
+}
+
+
 /**
  * Convert debrid + HTTP results into Stremio Stream objects.
  */
@@ -68,7 +153,7 @@ function buildStreams(
     });
   }
 
-  return streams;
+  return cleanStreams(streams);
 }
 
 /**

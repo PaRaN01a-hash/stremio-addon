@@ -52,7 +52,24 @@ export async function getExternalAddonStreams(meta: StreamMeta): Promise<Stream[
 
       logger.info(`External addon ${sourceName}: ${streams.length} streams`);
 
-      return streams.map((s: Stream) => labelStream(s, sourceName));
+      return streams
+        .filter((s: Stream) => {
+          const text = [
+            s.name || '',
+            s.title || '',
+            String((s as any).description || ''),
+            s.url || '',
+          ].join(' ').toLowerCase();
+
+          return !(
+            text.includes('comet sync') ||
+            text.includes('sync debrid') ||
+            text.includes('debrid-sync') ||
+            text.includes('debrid account library') ||
+            text.includes('select this stream')
+          );
+        })
+        .map((s: Stream) => labelStream(s, sourceName));
     })
   );
 
