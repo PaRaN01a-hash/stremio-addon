@@ -16,13 +16,29 @@ interface JackettItem {
 export async function getTitleFromTmdb(imdbId: string, type: 'movie' | 'series'): Promise<string | null> {
   const apiKey = process.env.TMDB_API_KEY;
   if (!apiKey) return null;
+
   try {
-    const endpoint = type === 'movie'
-      ? `https://api.themoviedb.org/3/movie/${imdbId}?api_key=${apiKey}`
-      : `https://api.themoviedb.org/3/tv/${imdbId}?api_key=${apiKey}`;
-    const res = await axios.get<{ title?: string; name?: string; release_date?: string; first_air_date?: string }>(endpoint, { timeout: 5000 });
-    const title = res.data.title || res.data.name || null;
-    const year = (res.data.release_date || res.data.first_air_date || '').slice(0, 4);
+    // Robust IMDb -> TMDB lookup for both movies and series
+    const find = await axios.get(
+      `https://api.themoviedb.org/3/find/${imdbId}`,
+      {
+        timeout: 5000,
+        params: {
+          api_key: apiKey,
+          external_source: 'imdb_id',
+        },
+      }
+    );
+
+    const item =
+      type === 'movie'
+        ? find.data?.movie_results?.[0]
+        : find.data?.tv_results?.[0];
+
+    const title = item?.title || item?.name || null;
+    const year = String(item?.release_date || item?.first_air_date || '').slice(0, 4);
+
+    if (!title) return null;
     return year ? `${title} ${year}` : title;
   } catch {
     return null;

@@ -117,7 +117,9 @@ function cleanStreams(streams: Stream[]): Stream[] {
  */
 function buildStreams(
   debridResults: Awaited<ReturnType<typeof resolveDebrid>>,
-  httpStreams: HttpStream[]
+  httpStreams: HttpStream[],
+  season?: number,
+  episode?: number
 ): Stream[] {
   const streams: Stream[] = [];
 
@@ -136,7 +138,7 @@ function buildStreams(
         torrent.hdr || false,
         torrent.dolbyVision || false
       ),
-      url: lazyTorBoxUrl(torrent.infoHash),
+      url: lazyTorBoxUrl(torrent.infoHash, season, episode),
       behaviorHints: { bingeGroup: `torbox-${torrent.quality}` },
     });
   }
@@ -183,7 +185,7 @@ async function fetchFreshStreams(meta: StreamMeta): Promise<Stream[]> {
   // Resolve torrents through TorBox
   const debridResults = await resolveDebrid(torrents, season, episode);
 
-  const streams = [...buildStreams(debridResults, httpStreams), ...externalStreams];
+  const streams = [...buildStreams(debridResults, httpStreams, season, episode), ...externalStreams];
   logger.info(`Fetched ${streams.length} streams for ${imdbId}`, {
     debrid: debridResults.filter((r) => r.cached).length,
     http: httpStreams.length,

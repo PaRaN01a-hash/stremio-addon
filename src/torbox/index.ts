@@ -11,6 +11,141 @@ function getKey(): string {
   return process.env.TORBOX_API_KEY || '';
 }
 
+type TorBoxFile = {
+  id?: number | string;
+  file_id?: number | string;
+  name?: string;
+  filename?: string;
+  path?: string;
+  size?: number | string;
+};
+
+function isVideoFile(name: string): boolean {
+  return /\.(mkv|mp4|avi|mov|m4v|webm)$/i.test(name);
+}
+
+function fileSize(file: TorBoxFile): number {
+  return Number(file.size || 0);
+}
+
+function fileName(file: TorBoxFile): string {
+  return String(file.name || file.filename || file.path || '');
+}
+
+function fileId(file: TorBoxFile): number | null {
+  const id = file.id ?? file.file_id;
+  const n = Number(id);
+  return Number.isFinite(n) ? n : null;
+}
+
+function episodeRegexes(season?: number, episode?: number): RegExp[] {
+  if (season === undefined || episode === undefined) return [];
+
+  const s = String(season).padStart(2, '0');
+  const e = String(episode).padStart(2, '0');
+
+  return [
+    new RegExp(`s${s}\\s*e${e}`, 'i'),
+    new RegExp(`s${season}\\s*e${episode}`, 'i'),
+    new RegExp(`${season}\\s*x\\s*${episode}`, 'i'),
+    new RegExp(`season\\s*${season}.*episode\\s*${episode}`, 'i'),
+    new RegExp(`\\b${s}${e}\\b`, 'i'),
+  ];
+}
+
+async function getTorBoxFiles(torrentId: any): Promise<TorBoxFile[]> {
+  const candidates = [
+    `${BASE_URL}/torrents/mylist`,
+    `${BASE_URL}/torrents/info`,
+    `${BASE_URL}/torrents/list`,
+  ];
+
+  for (const url of candidates) {
+    try {
+      const res = await axios.get(url, {
+        headers: { Authorization: `Bearer ${getKey()}` },
+        params: { id: torrentId, torrent_id: torrentId, bypass_cache: true },
+        timeout: 10000,
+      });
+
+      const data = res.data?.data;
+
+      const files =
+        data?.files ||
+        data?.torrent?.files ||
+        data?.[0]?.files ||
+        (Array.isArray(data) ? data.find((x: any) => String(x.id) === String(torrentId) || String(x.torrent_id) === String(torrentId))?.files : null);
+
+      if (Array.isArray(files)) {
+        return files;
+      }
+    } catch {
+      // Try next endpoint quietly
+    }
+  }
+
+  return [];
+}
+
+async function pickTorBoxFileId(
+  torrentId: any,
+  season?: number,
+  episode?: number
+): Promise<number> {
+  const files = await getTorBoxFiles(torrentId);
+
+  if (!files.length) {
+    logger.warn('TorBox file list unavailable, falling back to file_id 0', { torrentId });
+    return 0;
+  }
+
+  const videos = files
+    .filter((file) => isVideoFile(fileName(file)))
+    .sort((a, b) => fileSize(b) - fileSize(a));
+
+  if (!videos.length) {
+    logger.warn('TorBox file list had no video files, falling back to file_id 0', { torrentId });
+    return 0;
+  }
+
+  const patterns = episodeRegexes(season, episode);
+
+  if (patterns.length) {
+    const matched = videos.find((file) => {
+      const name = fileName(file);
+      return patterns.some((pattern) => pattern.test(name));
+    });
+
+    if (matched) {
+      const matchedId = fileId(matched);
+
+      if (matchedId !== null) {
+        logger.info('TorBox picked matching episode file', {
+          torrentId,
+          fileId: matchedId,
+          file: fileName(matched),
+        });
+        return matchedId;
+      }
+    }
+  }
+
+  const largest = videos[0];
+  const largestId = fileId(largest);
+
+  if (largestId !== null) {
+    logger.info('TorBox picked largest video file', {
+      torrentId,
+      fileId: largestId,
+      file: fileName(largest),
+    });
+    return largestId;
+  }
+
+  return 0;
+}
+
+
 export async function checkDebridAvailability(
   infoHashes: string[]
 ): Promise<Map<string, boolean>> {
@@ -92,10 +227,12 @@ export async function getDebridStreamUrl(
       return null;
     }
 
+    const selectedFileId = await pickTorBoxFileId(torrentId, season, episode);
+
     const params: Record<string, any> = {
       token: getKey(),
       torrent_id: torrentId,
-      file_id: 0,
+      file_id: selectedFileId,
     };
 
     if (season !== undefined) params.season = season;
