@@ -72,6 +72,23 @@ export function createServer(): express.Application {
     res.json({ status: 'ok', version: manifest.version, name: manifest.name });
   });
 
+
+  // Lightweight stats endpoint
+  app.get('/stats', (_req: Request, res: Response) => {
+    res.json({
+      status: 'ok',
+      uptime: Math.floor(process.uptime()),
+      memoryMB: Math.round(process.memoryUsage().rss / 1024 / 1024),
+      timestamp: new Date().toISOString(),
+      env: {
+        maxFinalStreams: process.env.MAX_FINAL_STREAMS || process.env.FINAL_STREAMS || 'unknown',
+        torboxMaxSizeGB: process.env.TORBOX_MAX_SIZE_GB || 'unknown',
+        zileanMaxResults: process.env.ZILEAN_MAX_RESULTS || 'unknown',
+        resolveCacheTTL: process.env.CACHE_TTL_RESOLVE || 'unknown',
+      },
+    });
+  });
+
   // Root — redirect to manifest for convenience
   app.get('/', (_req: Request, res: Response) => {
     res.redirect('/manifest.json');
