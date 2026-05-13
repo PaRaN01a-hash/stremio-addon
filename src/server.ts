@@ -16,7 +16,7 @@ import { getDebridStreamUrlByHash } from './torbox';
 import { getStreams } from './providers/streams';
 import { scoreStreamCandidate } from './core/candidate-match';
 import { candidateSortScore, bucketCandidate, sortCandidates } from './core/candidate-sort';
-import { getKnownGoodStreams, localIndexKey } from './core/local-index';
+import { getKnownGoodStreams, localIndexKey, saveManualKnownGoodStreams } from './core/local-index';
 
 export function createServer(): express.Application {
   const app = express();
@@ -255,6 +255,57 @@ export function createServer(): express.Application {
       res.status(500).json({
         status: 'error',
         error: err.message || 'debug_local_index_failed',
+      });
+    }
+  });
+
+  app.post('/debug/local-index/:type/:id.json', async (req: Request, res: Response) => {
+    try {
+      const type = req.params.type as 'movie' | 'series';
+      const rawId = req.params.id;
+
+      const parts = rawId.split(':');
+      const imdbId = parts[0];
+      const season = parts[1] ? parseInt(parts[1], 10) : undefined;
+      const episode = parts[2] ? parseInt(parts[2], 10) : undefined;
+
+      const title = String(req.body?.title || req.body?.name || '').trim();
+      const streams = Array.isArray(req.body?.streams) ? req.body.streams : [];
+
+      const meta = {
+        id: rawId,
+        imdbId,
+        type,
+        season,
+        episode,
+      };
+
+      const indexed = await saveManualKnownGoodStreams(meta, streams, title);
+
+      res.json({
+        status: 'ok',
+        request: { type, id: rawId, imdbId, season, episode, title },
+        key: localIndexKey(meta),
+        count: indexed.length,
+        streams: indexed.map((item, index) => ({
+          index: index + 1,
+          id: item.id,
+          name: item.name,
+          title: item.title,
+          filename: item.filename,
+          url: item.url,
+          size: item.size,
+          bucket: item.bucket,
+          sortScore: item.sortScore,
+          matchDecision: item.matchDecision,
+          matchScore: item.matchScore,
+          indexedAt: item.indexedAt,
+        })),
+      });
+    } catch (err: any) {
+      res.status(400).json({
+        status: 'error',
+        error: err.message || 'manual_local_index_failed',
       });
     }
   });

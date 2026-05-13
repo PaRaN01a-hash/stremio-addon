@@ -114,6 +114,100 @@ export async function saveKnownGoodStreams(
   });
 }
 
+export async function saveManualKnownGoodStreams(
+  meta: StreamMeta,
+  streams: Stream[],
+  fallbackTitle?: string
+): Promise<LocalIndexedStream[]> {
+  const title = expectedTitle(meta, fallbackTitle);
+
+  if (!title) {
+    throw new Error('manual_index_title_required');
+  }
+
+  if (!streams.length) {
+    throw new Error('manual_index_streams_required');
+  }
+
+  const indexed: LocalIndexedStream[] = streams
+    .map((stream: any, index: number) => {
+      const normalizedStream: Stream = {
+        name: stream.name || '[Manual] Stream',
+        title: stream.title || stream.filename || stream.name || 'Manual stream',
+        description: stream.description || 'Manually seeded local index stream',
+        url: stream.url,
+        behaviorHints: {
+          ...(stream.behaviorHints || {}),
+          filename: stream.filename || stream.behaviorHints?.filename || stream.title || stream.name,
+          videoSize: stream.size || stream.behaviorHints?.videoSize,
+        },
+      };
+
+      const scored = scoreStreamCandidate({
+        id: String(normalizedStream.url || normalizedStream.behaviorHints?.filename || normalizedStream.title || index),
+        provider: 'external-addon',
+        sourceType: 'cached',
+        name: normalizedStream.name,
+        title: normalizedStream.title,
+        filename: normalizedStream.behaviorHints?.filename,
+        description: normalizedStream.description,
+        url: normalizedStream.url,
+        size: normalizedStream.behaviorHints?.videoSize,
+        raw: normalizedStream,
+      }, {
+        type: meta.type,
+        title,
+        season: meta.season,
+        episode: meta.episode,
+      });
+
+      return {
+        id: scored.id,
+        imdbId: meta.imdbId,
+        type: meta.type,
+        season: meta.season,
+        episode: meta.episode,
+        name: scored.name,
+        title: scored.title,
+        filename: scored.filename,
+        description: scored.description,
+        url: scored.url,
+        size: scored.size,
+        matchDecision: scored.match?.decision,
+        matchScore: scored.match?.score,
+        sortScore: candidateSortScore(scored),
+        bucket: bucketCandidate(scored),
+        indexedAt: new Date().toISOString(),
+        raw: normalizedStream,
+      };
+    })
+    .filter((item) => item.matchDecision === 'accept');
+
+  if (!indexed.length) {
+    throw new Error('manual_index_no_accepted_streams');
+  }
+
+  const existing = await getKnownGoodStreams(meta);
+  const byId = new Map<string, LocalIndexedStream>();
+
+  for (const item of existing) byId.set(item.id, item);
+  for (const item of indexed) byId.set(item.id, item);
+
+  const merged = Array.from(byId.values())
+    .sort((a, b) => (b.sortScore || 0) - (a.sortScore || 0));
+
+  await cacheSet(localIndexKey(meta), merged, LOCAL_INDEX_TTL);
+
+  logger.info('Saved manual streams to local index', {
+    key: localIndexKey(meta),
+    added: indexed.length,
+    total: merged.length,
+  });
+
+  return merged;
+}
+
+
 export async function getKnownGoodStreams(meta: StreamMeta): Promise<LocalIndexedStream[]> {
   const { value } = await cacheGet<LocalIndexedStream[]>(
     localIndexKey(meta),
