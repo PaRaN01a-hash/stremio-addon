@@ -365,6 +365,7 @@ function extractHash(stream: Stream): string | null {
 function expectedSeriesTitle(meta: StreamMeta): string {
   const fallbacks: Record<string, string> = {
     tt0108778: 'Friends',
+    tt9813792: 'From',
   };
 
   return String(
