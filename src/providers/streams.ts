@@ -13,6 +13,7 @@ import { parseReleaseTitle } from '../utils/release-parser';
 import { scoreReleaseMatch } from '../utils/match-score';
 import { scoreStreamCandidate } from '../core/candidate-match';
 import { sortCandidates } from '../core/candidate-sort';
+import { saveKnownGoodStreams } from '../core/local-index';
 import {
   filterStreams,
   sortStreams,
@@ -827,6 +828,8 @@ async function fetchFreshStreams(meta: StreamMeta): Promise<Stream[]> {
     totalMs: msSince(started),
     coreSort: coreSortStreamsEnabled(),
   });
+
+  await saveKnownGoodStreams(meta, finalStreams, expectedTitleForCoreMatch(meta));
 
   return finalStreams;
 }

@@ -36,19 +36,31 @@ export function localIndexKey(meta: StreamMeta): string {
     : `local:index:streams:${meta.imdbId}`;
 }
 
-function expectedTitle(meta: StreamMeta): string {
+function expectedTitle(meta: StreamMeta, fallbackTitle?: string): string {
   return String(
+    fallbackTitle ||
     (meta as any).title ||
     (meta as any).name ||
     ''
   ).trim();
 }
 
-export async function saveKnownGoodStreams(meta: StreamMeta, streams: Stream[]): Promise<void> {
+export async function saveKnownGoodStreams(
+  meta: StreamMeta,
+  streams: Stream[],
+  fallbackTitle?: string
+): Promise<void> {
   if (!streams.length) return;
 
-  const title = expectedTitle(meta);
-  if (!title) return;
+  const title = expectedTitle(meta, fallbackTitle);
+  if (!title) {
+    logger.debug('Skipping local index save because expected title is missing', {
+      imdbId: meta.imdbId,
+      season: meta.season,
+      episode: meta.episode,
+    });
+    return;
+  }
 
   const indexed: LocalIndexedStream[] = streams
     .map((stream: any, index: number) => {
