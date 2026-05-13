@@ -36,6 +36,36 @@ export function localIndexKey(meta: StreamMeta): string {
     : `local:index:streams:${meta.imdbId}`;
 }
 
+function publicBaseUrl(): string {
+  return (process.env.PUBLIC_BASE_URL || process.env.BASE_URL || 'http://localhost:6000').replace(/\/$/, '');
+}
+
+function normalizeInfoHash(input: unknown): string | undefined {
+  const value = String(input || '').trim();
+  if (!value) return undefined;
+
+  const btih = value.match(/btih:([a-f0-9]{40})/i);
+  if (btih?.[1]) return btih[1].toLowerCase();
+
+  const hex = value.match(/[a-f0-9]{40}/i);
+  if (hex?.[0]) return hex[0].toLowerCase();
+
+  return undefined;
+}
+
+function lazyResolveUrlFromHash(infoHashInput: unknown, meta: StreamMeta): string | undefined {
+  const infoHash = normalizeInfoHash(infoHashInput);
+  if (!infoHash) return undefined;
+
+  const url = new URL('/resolve', publicBaseUrl());
+  url.searchParams.set('hash', infoHash);
+
+  if (meta.season !== undefined) url.searchParams.set('season', String(meta.season));
+  if (meta.episode !== undefined) url.searchParams.set('episode', String(meta.episode));
+
+  return url.toString();
+}
+
 function expectedTitle(meta: StreamMeta, fallbackTitle?: string): string {
   return String(
     fallbackTitle ||
@@ -131,11 +161,13 @@ export async function saveManualKnownGoodStreams(
 
   const indexed: LocalIndexedStream[] = streams
     .map((stream: any, index: number) => {
-      const normalizedStream: Stream = {
+      const manualInfoHash = normalizeInfoHash(stream.infoHash || stream.hash || stream.info_hash || stream.infohash);
+
+        const normalizedStream: Stream = {
         name: stream.name || '[Manual] Stream',
         title: stream.title || stream.filename || stream.name || 'Manual stream',
         description: stream.description || 'Manually seeded local index stream',
-        url: stream.url,
+        url: stream.url || lazyResolveUrlFromHash(manualInfoHash, meta),
         behaviorHints: {
           ...(stream.behaviorHints || {}),
           filename: stream.filename || stream.behaviorHints?.filename || stream.title || stream.name,
