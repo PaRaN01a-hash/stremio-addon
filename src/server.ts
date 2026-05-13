@@ -15,7 +15,7 @@ import { logger } from './utils/logger';
 import { getDebridStreamUrlByHash } from './torbox';
 import { getStreams } from './providers/streams';
 import { scoreStreamCandidate } from './core/candidate-match';
-import { candidateSortScore, bucketCandidate } from './core/candidate-sort';
+import { candidateSortScore, bucketCandidate, sortCandidates } from './core/candidate-sort';
 
 export function createServer(): express.Application {
   const app = express();
@@ -103,6 +103,8 @@ export function createServer(): express.Application {
         ''
       ).trim();
 
+      const debugSort = String(req.query.sort || '').toLowerCase();
+
       const started = Date.now();
 
       const streams = await getStreams({
@@ -116,10 +118,10 @@ export function createServer(): express.Application {
       res.json({
         status: 'ok',
         tookMs: Date.now() - started,
-          request: { type, id: rawId, imdbId, season, episode, expectedTitle },
+          request: { type, id: rawId, imdbId, season, episode, expectedTitle, debugSort },
         count: streams.length,
-          streams: streams.map((stream: any, index: number) => {
-              const scoredCandidate = scoreStreamCandidate({
+          streams: (debugSort === 'core'
+            ? sortCandidates(streams.map((stream: any, index: number) => scoreStreamCandidate({
                 id: String(stream.url || stream.behaviorHints?.filename || stream.title || stream.name || index),
                 provider: stream.name?.startsWith('[TB+]') ? 'torbox' : 'external-addon',
                 sourceType: stream.name?.startsWith('[TB+]') ? 'cached' : 'external',
@@ -135,22 +137,41 @@ export function createServer(): express.Application {
                 title: expectedTitle,
                 season,
                 episode,
-              });
+              })))
+            : streams.map((stream: any, index: number) => scoreStreamCandidate({
+                id: String(stream.url || stream.behaviorHints?.filename || stream.title || stream.name || index),
+                provider: stream.name?.startsWith('[TB+]') ? 'torbox' : 'external-addon',
+                sourceType: stream.name?.startsWith('[TB+]') ? 'cached' : 'external',
+                name: stream.name,
+                title: stream.title,
+                filename: stream.behaviorHints?.filename,
+                description: stream.description,
+                url: stream.url,
+                size: stream.behaviorHints?.videoSize,
+                raw: stream,
+              }, {
+                type,
+                title: expectedTitle,
+                season,
+                episode,
+              }))
+          ).map((scoredCandidate: any, index: number) => {
+            const stream = scoredCandidate.raw || {};
+            const parsedRelease = scoredCandidate.parsedRelease || {
+              raw: '',
+              cleaned: '',
+              normalizedTitle: '',
+              type: 'unknown',
+              quality: 'unknown',
+              isPack: false,
+              isSeasonPack: false,
+              isEpisodePack: false,
+              flags: [],
+              tokens: [],
+            };
+            const match = scoredCandidate.match;
 
-              const parsedRelease = scoredCandidate.parsedRelease || {
-                raw: '',
-                cleaned: '',
-                normalizedTitle: '',
-                type: 'unknown',
-                quality: 'unknown',
-                isPack: false,
-                isSeasonPack: false,
-                isEpisodePack: false,
-                flags: [],
-                tokens: [],
-              };
-              const match = scoredCandidate.match;
-              return {
+            return {
               index: index + 1,
               name: stream.name,
               title: stream.title,
@@ -161,11 +182,11 @@ export function createServer(): express.Application {
               bingeGroup: stream.behaviorHints?.bingeGroup,
               filename: stream.behaviorHints?.filename,
               videoSize: stream.behaviorHints?.videoSize,
-                matchSource: scoredCandidate.matchSource,
-                parseable: scoredCandidate.parseable,
-                releaseTitle: scoredCandidate.filename || scoredCandidate.title || scoredCandidate.name || '',
-                bucket: bucketCandidate(scoredCandidate),
-                sortScore: candidateSortScore(scoredCandidate),
+              matchSource: scoredCandidate.matchSource,
+              parseable: scoredCandidate.parseable,
+              releaseTitle: scoredCandidate.filename || scoredCandidate.title || scoredCandidate.name || '',
+              bucket: bucketCandidate(scoredCandidate),
+              sortScore: candidateSortScore(scoredCandidate),
               parsedRelease: {
                 normalizedTitle: parsedRelease.normalizedTitle,
                 type: parsedRelease.type,
