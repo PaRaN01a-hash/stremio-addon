@@ -422,7 +422,47 @@ function streamMatchesRequestedEpisode(stream: Stream, meta: StreamMeta): boolea
 }
 
 
-function torrentMatchesExpectedSeries(torrent: { title?: string }, meta: StreamMeta): boolean {
+interface TorrentRejectStats {
+  total: number;
+  penalties: Record<string, number>;
+  examples: Array<{
+    releaseTitle: string;
+    score: number;
+    penalties: string[];
+  }>;
+}
+
+function createTorrentRejectStats(): TorrentRejectStats {
+  return {
+    total: 0,
+    penalties: {},
+    examples: [],
+  };
+}
+
+function recordTorrentReject(stats: TorrentRejectStats | undefined, releaseTitle: string, smartMatch: any): void {
+  if (!stats) return;
+
+  stats.total++;
+
+  for (const penalty of smartMatch.penalties || []) {
+    stats.penalties[penalty] = (stats.penalties[penalty] || 0) + 1;
+  }
+
+  if (stats.examples.length < 5) {
+    stats.examples.push({
+      releaseTitle,
+      score: smartMatch.score,
+      penalties: smartMatch.penalties || [],
+    });
+  }
+}
+
+function torrentMatchesExpectedSeries(
+  torrent: { title?: string },
+  meta: StreamMeta,
+  rejectStats?: TorrentRejectStats
+): boolean {
   if (meta.type !== 'series') return true;
 
   const expected = expectedSeriesTitle(meta);
@@ -441,13 +481,7 @@ function torrentMatchesExpectedSeries(torrent: { title?: string }, meta: StreamM
   });
 
   if (smartMatch.decision === 'reject') {
-    logger.info('Smart torrent match rejected release', {
-      expected,
-      releaseTitle,
-      score: smartMatch.score,
-      penalties: smartMatch.penalties,
-      reasons: smartMatch.reasons,
-    });
+    recordTorrentReject(rejectStats, releaseTitle, smartMatch);
     return false;
   }
 
@@ -726,14 +760,21 @@ async function fetchFreshStreams(meta: StreamMeta): Promise<Stream[]> {
 
   // Resolve torrents through TorBox
   const torboxStart = Date.now();
-  const titleGuardedTorrents = torrents.filter((torrent) => torrentMatchesExpectedSeries(torrent, meta));
-    if (titleGuardedTorrents.length !== torrents.length) {
-      logger.info('Series title guard filtered torrents', {
-        imdbId,
-        before: torrents.length,
-        after: titleGuardedTorrents.length,
-      });
-    }
+  const rejectStats = createTorrentRejectStats();
+  const titleGuardedTorrents = torrents.filter((torrent) =>
+    torrentMatchesExpectedSeries(torrent, meta, rejectStats)
+  );
+
+  if (titleGuardedTorrents.length !== torrents.length) {
+    logger.info('Series title guard filtered torrents', {
+      imdbId,
+      before: torrents.length,
+      after: titleGuardedTorrents.length,
+      rejected: rejectStats.total,
+      penalties: rejectStats.penalties,
+      examples: rejectStats.examples,
+    });
+  }
 
     const debridResults = await resolveDebrid(titleGuardedTorrents, season, episode);
   if ((globalThis as any).streamStats) {
