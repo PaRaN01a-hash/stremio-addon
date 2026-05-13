@@ -66,6 +66,28 @@ function lazyResolveUrlFromHash(infoHashInput: unknown, meta: StreamMeta): strin
   return url.toString();
 }
 
+function streamInfoHash(stream: any): string | undefined {
+  return normalizeInfoHash(
+    stream?.infoHash ||
+    stream?.infohash ||
+    stream?.info_hash ||
+    stream?.hash ||
+    stream?.behaviorHints?.infoHash ||
+    stream?.behaviorHints?.infohash ||
+    stream?.behaviorHints?.hash ||
+    stream?.url ||
+    stream?.externalUrl ||
+    stream?.title ||
+    stream?.name ||
+    stream?.description ||
+    stream?.behaviorHints?.filename
+  );
+}
+
+function streamUrlWithInfoHashFallback(stream: any, meta: StreamMeta): string | undefined {
+  return stream?.url || lazyResolveUrlFromHash(streamInfoHash(stream), meta);
+}
+
 function expectedTitle(meta: StreamMeta, fallbackTitle?: string): string {
   return String(
     fallbackTitle ||
@@ -94,15 +116,17 @@ export async function saveKnownGoodStreams(
 
   const indexed: LocalIndexedStream[] = streams
     .map((stream: any, index: number) => {
+      const streamUrl = streamUrlWithInfoHashFallback(stream, meta);
+
       const scored = scoreStreamCandidate({
-        id: String(stream.url || stream.behaviorHints?.filename || stream.title || stream.name || index),
+        id: String(streamUrl || stream.behaviorHints?.filename || stream.title || stream.name || index),
         provider: stream.name?.startsWith('[TB+]') ? 'torbox' : 'external-addon',
         sourceType: stream.name?.startsWith('[TB+]') ? 'cached' : 'external',
         name: stream.name,
         title: stream.title,
         filename: stream.behaviorHints?.filename,
         description: stream.description,
-        url: stream.url,
+        url: streamUrl,
         size: stream.behaviorHints?.videoSize,
         raw: stream,
       }, {
