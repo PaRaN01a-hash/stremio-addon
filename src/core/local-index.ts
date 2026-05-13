@@ -47,7 +47,7 @@ function normalizeInfoHash(input: unknown): string | undefined {
   const btih = value.match(/btih:([a-f0-9]{40})/i);
   if (btih?.[1]) return btih[1].toLowerCase();
 
-  const hex = value.match(/[a-f0-9]{40}/i);
+  const hex = value.match(/\b[a-f0-9]{40}\b/i);
   if (hex?.[0]) return hex[0].toLowerCase();
 
   return undefined;
