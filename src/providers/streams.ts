@@ -843,6 +843,22 @@ async function fetchFreshStreams(meta: StreamMeta): Promise<Stream[]> {
 /**
  * Background refresh: fetch and cache without blocking the current request.
  */
+function localIndexedStreamsToStremioStreams(indexed: any[]): Stream[] {
+  return indexed
+    .filter((item) => item?.url)
+    .map((item) => ({
+      name: item.name || '[Maximus Memory]',
+      title: item.title || item.filename || item.name || 'Remembered stream',
+      description: item.description || item.filename || item.title || 'Remembered Maximus stream',
+      url: item.url,
+      behaviorHints: {
+        ...(item.raw?.behaviorHints || {}),
+        filename: item.filename || item.raw?.behaviorHints?.filename || item.title || item.name,
+        videoSize: item.size || item.raw?.behaviorHints?.videoSize,
+      },
+    }));
+}
+
 function backgroundRefresh(meta: StreamMeta, cacheKey: string): void {
   if (refreshing.has(cacheKey)) return;
   refreshing.add(cacheKey);
@@ -927,9 +943,9 @@ export async function getStreams(meta: StreamMeta): Promise<Stream[]> {
     if (indexed.length > 0) {
       if (stats) stats.cacheHits++;
 
-      const indexedStreams = indexed.map((item) => item.raw);
+      const indexedStreams = localIndexedStreamsToStremioStreams(indexed);
 
-      logger.info('Local index first hit', {
+      logger.info('Local index warm hit, returning remembered streams immediately', {
         imdbId,
         season,
         episode,
