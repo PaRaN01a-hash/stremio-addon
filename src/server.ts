@@ -119,23 +119,55 @@ export function createServer(): express.Application {
           request: { type, id: rawId, imdbId, season, episode, expectedTitle },
         count: streams.length,
           streams: streams.map((stream: any, index: number) => {
-            const releaseTitle = String(
-              stream.behaviorHints?.filename ||
-              stream.title ||
-              stream.name ||
-              ''
-            );
+              const releaseCandidates = [
+                { source: 'filename', value: stream.behaviorHints?.filename },
+                { source: 'title', value: stream.title },
+                { source: 'name', value: stream.name },
+              ]
+                .map((candidate) => ({
+                  source: candidate.source,
+                  value: String(candidate.value || '').trim(),
+                }))
+                .filter((candidate) => candidate.value.length > 0);
 
-            const parsedRelease = parseReleaseTitle(releaseTitle);
+              const selectedRelease = releaseCandidates.find((candidate) => {
+                const parsed = parseReleaseTitle(candidate.value);
+                return Boolean(
+                  parsed.normalizedTitle ||
+                  parsed.season !== undefined ||
+                  parsed.episode !== undefined ||
+                  parsed.year !== undefined
+                );
+              });
 
-              const match = expectedTitle
+              const matchSource = selectedRelease?.source || 'none';
+              const releaseTitle = selectedRelease?.value || '';
+
+              const parsedRelease = parseReleaseTitle(releaseTitle);
+              const parseable = Boolean(
+                parsedRelease.normalizedTitle ||
+                parsedRelease.season !== undefined ||
+                parsedRelease.episode !== undefined ||
+                parsedRelease.year !== undefined
+              );
+
+              const match = expectedTitle && parseable
                 ? scoreReleaseMatch(parsedRelease, {
                     type,
                     title: expectedTitle,
                     season,
                     episode,
                   })
-                : null;
+                : {
+                    score: 0,
+                    decision: 'unscored',
+                    reasons: [],
+                    penalties: [
+                      expectedTitle
+                        ? 'no-parseable-release-title'
+                        : 'missing-expected-title',
+                    ],
+                  };
 
             return {
               index: index + 1,
@@ -148,6 +180,9 @@ export function createServer(): express.Application {
               bingeGroup: stream.behaviorHints?.bingeGroup,
               filename: stream.behaviorHints?.filename,
               videoSize: stream.behaviorHints?.videoSize,
+                matchSource,
+                parseable,
+                releaseTitle,
               parsedRelease: {
                 normalizedTitle: parsedRelease.normalizedTitle,
                 type: parsedRelease.type,
