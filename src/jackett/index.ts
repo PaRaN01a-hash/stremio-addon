@@ -61,35 +61,57 @@ export async function searchJackett(
     return [];
   }
 
-  // Get title for search query
   const title = await getTitleFromTmdb(imdbId, type);
   if (!title) {
     logger.warn(`Could not resolve title for ${imdbId}`);
     return [];
   }
 
-  let query = title;
+  const baseTitle = title.replace(/\s+\d{4}$/, '').trim();
+  const queries: string[] = [];
+
   if (type === 'series' && season !== undefined && episode !== undefined) {
-    query += ` S${String(season).padStart(2,'0')}E${String(episode).padStart(2,'0')}`;
+    const sxx = `S${String(season).padStart(2, '0')}`;
+    const exx = `E${String(episode).padStart(2, '0')}`;
+
+    queries.push(`${title} ${sxx}${exx}`);
+    queries.push(`${baseTitle} ${sxx}${exx}`);
+    queries.push(`${title} Season ${season}`);
+    queries.push(`${baseTitle} Season ${season}`);
+    queries.push(`${baseTitle} ${sxx}`);
+  } else {
+    queries.push(title);
   }
 
-  logger.info(`Jackett searching: "${query}" for ${imdbId}`);
+  const seenQueries = [...new Set(queries.filter(Boolean))];
+  const allResults: JackettItem[] = [];
 
   try {
-    const response = await axios.get<{ Results: JackettItem[] }>(
-      `${baseUrl}/api/v2.0/indexers/all/results`,
-      {
-        timeout,
-        params: { apikey: apiKey, Query: query },
-        maxRedirects: 5,
-      }
-    );
+    for (const query of seenQueries) {
+      logger.info(`Jackett searching: "${query}" for ${imdbId}`);
 
-    const results = response.data.Results || [];
-    logger.info(`Jackett returned ${results.length} results for ${imdbId} ("${query}")`);
+      const response = await axios.get<{ Results: JackettItem[] }>(
+        `${baseUrl}/api/v2.0/indexers/all/results`,
+        {
+          timeout,
+          params: { apikey: apiKey, Query: query },
+          maxRedirects: 5,
+        }
+      );
 
-    return results
+      const results = response.data.Results || [];
+      logger.info(`Jackett returned ${results.length} results for ${imdbId} ("${query}")`);
+      allResults.push(...results);
+    }
+
+    const titleNeedle = baseTitle.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+
+    const mapped = allResults
       .filter((r) => r.InfoHash || r.MagnetUri)
+      .filter((r) => {
+        const t = String(r.Title || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+        return !!titleNeedle && t.includes(titleNeedle);
+      })
       .slice(0, maxResults)
       .map((r): TorrentResult => {
         const { label } = parseQuality(r.Title);
@@ -113,8 +135,11 @@ export async function searchJackett(
         if (rankB !== rankA) return rankB - rankA;
         return b.seeders - a.seeders;
       });
+
+    logger.info(`Jackett mapped ${mapped.length} filtered results for ${imdbId}`);
+    return mapped;
   } catch (err: any) {
-    logger.error('Jackett search failed', { imdbId, query, err: err.message });
+    logger.error('Jackett search failed', { imdbId, err: err.message });
     return [];
   }
 }
