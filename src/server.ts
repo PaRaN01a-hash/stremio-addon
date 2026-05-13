@@ -14,6 +14,8 @@ import { manifest, streamHandler } from './addon';
 import { logger } from './utils/logger';
 import { getDebridStreamUrlByHash } from './torbox';
 import { getStreams } from './providers/streams';
+import { parseReleaseTitle } from './utils/release-parser';
+import { scoreReleaseMatch } from './utils/match-score';
 
 export function createServer(): express.Application {
   const app = express();
@@ -95,6 +97,12 @@ export function createServer(): express.Application {
       const season = parts[1] ? parseInt(parts[1], 10) : undefined;
       const episode = parts[2] ? parseInt(parts[2], 10) : undefined;
 
+      const expectedTitle = String(
+        req.query.title ||
+        req.query.name ||
+        ''
+      ).trim();
+
       const started = Date.now();
 
       const streams = await getStreams({
@@ -108,20 +116,52 @@ export function createServer(): express.Application {
       res.json({
         status: 'ok',
         tookMs: Date.now() - started,
-        request: { type, id: rawId, imdbId, season, episode },
+          request: { type, id: rawId, imdbId, season, episode, expectedTitle },
         count: streams.length,
-        streams: streams.map((stream: any, index: number) => ({
-          index: index + 1,
-          name: stream.name,
-          title: stream.title,
-          description: stream.description,
-          urlHost: (() => {
-            try { return new URL(stream.url).host; } catch { return null; }
-          })(),
-          bingeGroup: stream.behaviorHints?.bingeGroup,
-          filename: stream.behaviorHints?.filename,
-          videoSize: stream.behaviorHints?.videoSize,
-        })),
+          streams: streams.map((stream: any, index: number) => {
+            const releaseTitle = String(
+              stream.behaviorHints?.filename ||
+              stream.title ||
+              stream.name ||
+              ''
+            );
+
+            const parsedRelease = parseReleaseTitle(releaseTitle);
+
+              const match = expectedTitle
+                ? scoreReleaseMatch(parsedRelease, {
+                    type,
+                    title: expectedTitle,
+                    season,
+                    episode,
+                  })
+                : null;
+
+            return {
+              index: index + 1,
+              name: stream.name,
+              title: stream.title,
+              description: stream.description,
+              urlHost: (() => {
+                try { return new URL(stream.url).host; } catch { return null; }
+              })(),
+              bingeGroup: stream.behaviorHints?.bingeGroup,
+              filename: stream.behaviorHints?.filename,
+              videoSize: stream.behaviorHints?.videoSize,
+              parsedRelease: {
+                normalizedTitle: parsedRelease.normalizedTitle,
+                type: parsedRelease.type,
+                year: parsedRelease.year,
+                season: parsedRelease.season,
+                episode: parsedRelease.episode,
+                episodeEnd: parsedRelease.episodeEnd,
+                quality: parsedRelease.quality,
+                source: parsedRelease.source,
+                isSeasonPack: parsedRelease.isSeasonPack,
+              },
+              match,
+            };
+          }),
       });
     } catch (err: any) {
       res.status(500).json({

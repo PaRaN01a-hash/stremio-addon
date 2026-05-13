@@ -59,7 +59,11 @@ function tokenOverlapScore(a: string, b: string): number {
   return recall * precision;
 }
 
-function hasSuspiciousExtraTitleTokens(parsedTitle: string, metaTitle: string): boolean {
+function hasSuspiciousExtraTitleTokens(
+  parsedTitle: string,
+  metaTitle: string,
+  parsed?: ParsedReleaseTitle
+): boolean {
   const releaseTokens = tokenSet(parsedTitle);
   const metaTokens = tokenSet(metaTitle);
 
@@ -76,7 +80,14 @@ function hasSuspiciousExtraTitleTokens(parsedTitle: string, metaTitle: string): 
     'and',
   ]);
 
-  const meaningfulExtras = extras.filter(token => !harmlessExtras.has(token));
+  const meaningfulExtras = extras.filter(token => {
+    if (harmlessExtras.has(token)) return false;
+
+    // Release names often include the show/movie year: From 2022, Fargo 2014, etc.
+    if (parsed?.year && token === String(parsed.year)) return false;
+
+    return true;
+  });
 
   // Short titles are dangerous: Friends vs Smiling Friends, From vs Away From Home, Dark vs Dark Matter.
   if (metaTokens.size <= 2 && meaningfulExtras.length > 0) {
@@ -121,7 +132,8 @@ export function scoreReleaseMatch(
       bestTitleScore = candidateScore;
       suspiciousExtraTitleTokens = hasSuspiciousExtraTitleTokens(
         parsed.normalizedTitle,
-        candidate
+        candidate,
+        parsed
       );
     }
   }
