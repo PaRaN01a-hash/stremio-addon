@@ -42,9 +42,13 @@ function externalAddonsOnColdLoadEnabled(): boolean {
 }
 
 function localIndexFirstEnabled(): boolean {
-  return ['1', 'true', 'yes', 'on'].includes(
-    String(process.env.LOCAL_INDEX_FIRST || '').toLowerCase()
-  );
+  const value = String(process.env.LOCAL_INDEX_FIRST || '').trim().toLowerCase();
+
+  // Maximus memory-first is now the default.
+  // Use LOCAL_INDEX_FIRST=0 / false / off / no to disable it.
+  if (!value) return true;
+
+  return !['0', 'false', 'off', 'no', 'disabled'].includes(value);
 }
 
 function expectedTitleForCoreMatch(meta: StreamMeta): string {
