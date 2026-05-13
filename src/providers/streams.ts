@@ -485,7 +485,17 @@ function buildStreams(
     ].filter(Boolean);
 
     const badge = '[TB+]';
-    const featureText = tags.slice(0, 3).join(' ');
+
+    const isSeasonPack =
+      /\bS\d{1,2}\s*-\s*S?\d{1,2}\b/i.test(releaseTitle) ||
+      /\bSeason\s*\d{1,2}\b/i.test(releaseTitle) ||
+      (/\bS\d{1,2}\b/i.test(releaseTitle) && !/\bS\d{1,2}E\d{1,2}\b/i.test(releaseTitle));
+
+    const featureText = [
+      isSeasonPack ? 'Season Pack' : '',
+      ...tags,
+    ].filter(Boolean).slice(0, 4).join(' • ');
+
     const release =
       releaseTitle.match(/-([A-Za-z0-9]+)(?:\s*(?:mkv|mp4|avi))?$/i)?.[1] ||
       releaseTitle.match(/\[([A-Za-z0-9]+)\]/)?.[1] ||
@@ -494,19 +504,33 @@ function buildStreams(
       'Scene';
 
     const weakRelease = [
-        'com', 'net', 'org', 'mkv', 'mp4', 'avi', 'www',
-        'p', 'extended', 'unknown'
-      ].includes(String(release).toLowerCase());
+      'com', 'net', 'org', 'mkv', 'mp4', 'avi', 'www',
+      'p', 'extended', 'unknown', 'wiki'
+    ].includes(String(release).toLowerCase());
+
     const cleanRelease = weakRelease ? (torrent.source || 'Scene') : release;
 
-    const inferredQuality =
+      const inferredQuality =
         titleUpper.includes('2160') || titleUpper.includes('4K') ? '4K' :
         titleUpper.includes('1080') ? '1080p' :
         titleUpper.includes('720') ? '720p' :
         titleUpper.includes('480') ? '480p' :
-        torrent.quality;
+        torrent.quality || 'Unknown';
 
-      const streamName = `${badge} ${inferredQuality} • ${cleanRelease}${featureText ? ' • ' + featureText : ''}`;
+      const displayQuality =
+        isSeasonPack && String(inferredQuality).toLowerCase() === 'unknown'
+          ? 'Season Pack'
+          : inferredQuality;
+
+      const streamName = [
+        `${badge} ${displayQuality}`,
+        cleanRelease,
+        ...tags,
+      ]
+        .filter(Boolean)
+        .filter((part, index, arr) => arr.indexOf(part) === index)
+        .slice(0, 6)
+        .join(' • ');
 
     const sourceLine = `${torrent.source || 'Unknown'}${torrent.source === 'Zilean-DMM' ? ' Lazy Movie | zilean_dmm' : ''}`;
 
