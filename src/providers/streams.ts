@@ -9,6 +9,8 @@ import { buildStreamTitle } from '../utils/quality';
 import { logger } from '../utils/logger';
 import { getExternalAddonStreams } from './external-addons';
 import { getExternalStremioStreams } from './external-stremio';
+import { parseReleaseTitle } from '../utils/release-parser';
+import { scoreReleaseMatch } from '../utils/match-score';
 import {
   filterStreams,
   sortStreams,
@@ -377,12 +379,32 @@ function torrentMatchesExpectedSeries(torrent: { title?: string }, meta: StreamM
   const expected = expectedSeriesTitle(meta);
   if (!expected) return true;
 
-  const title = normalizeMatchText(torrent.title || '');
+  const releaseTitle = torrent.title || '';
+  const title = normalizeMatchText(releaseTitle);
   if (!title) return false;
+
+  const parsed = parseReleaseTitle(releaseTitle);
+  const smartMatch = scoreReleaseMatch(parsed, {
+    type: 'series',
+    title: expected,
+    season: meta.season,
+    episode: meta.episode,
+  });
+
+  if (smartMatch.decision === 'reject') {
+    logger.info('Smart torrent match rejected release', {
+      expected,
+      releaseTitle,
+      score: smartMatch.score,
+      penalties: smartMatch.penalties,
+      reasons: smartMatch.reasons,
+    });
+    return false;
+  }
 
   const compactTitle = title.replace(/\s+/g, '');
 
-  // Episode guard:
+  // Legacy fallback guard:
   // If the release explicitly names an episode, it must match the requested one.
   // Season packs are still allowed because TorBox can resolve files inside packs.
   if (meta.season !== undefined && meta.episode !== undefined) {
@@ -426,7 +448,6 @@ function torrentMatchesExpectedSeries(torrent: { title?: string }, meta: StreamM
 
   return true;
 }
-
 
 function qualityScore(stream: Stream): number {
   const text = `${stream.name} ${stream.title}`.toLowerCase();
