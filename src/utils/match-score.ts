@@ -43,17 +43,47 @@ function tokenSet(value: string): Set<string> {
 }
 
 function tokenOverlapScore(a: string, b: string): number {
-  const left = tokenSet(a);
-  const right = tokenSet(b);
+  const releaseTokens = tokenSet(a);
+  const metaTokens = tokenSet(b);
 
-  if (!left.size || !right.size) return 0;
+  if (!releaseTokens.size || !metaTokens.size) return 0;
 
   let overlap = 0;
-  for (const token of left) {
-    if (right.has(token)) overlap++;
+  for (const token of metaTokens) {
+    if (releaseTokens.has(token)) overlap++;
   }
 
-  return overlap / Math.max(left.size, right.size);
+  const recall = overlap / metaTokens.size;
+  const precision = overlap / releaseTokens.size;
+
+  return recall * precision;
+}
+
+function hasSuspiciousExtraTitleTokens(parsedTitle: string, metaTitle: string): boolean {
+  const releaseTokens = tokenSet(parsedTitle);
+  const metaTokens = tokenSet(metaTitle);
+
+  if (!releaseTokens.size || !metaTokens.size) return false;
+
+  const extras = [...releaseTokens].filter(token => !metaTokens.has(token));
+
+  if (!extras.length) return false;
+
+  const harmlessExtras = new Set([
+    'the',
+    'a',
+    'an',
+    'and',
+  ]);
+
+  const meaningfulExtras = extras.filter(token => !harmlessExtras.has(token));
+
+  // Short titles are dangerous: Friends vs Smiling Friends, From vs Away From Home, Dark vs Dark Matter.
+  if (metaTokens.size <= 2 && meaningfulExtras.length > 0) {
+    return true;
+  }
+
+  return meaningfulExtras.length >= 2;
 }
 
 function titleCandidates(meta: MatchMeta): string[] {
@@ -81,22 +111,37 @@ export function scoreReleaseMatch(
   const metaEpisode = asNumber(meta.episode);
 
   const candidates = titleCandidates(meta);
-  const bestTitleScore = candidates.reduce((best, candidate) => {
-    return Math.max(best, tokenOverlapScore(parsed.normalizedTitle, candidate));
-  }, 0);
+  let bestTitleScore = 0;
+  let suspiciousExtraTitleTokens = false;
 
-  if (bestTitleScore >= 0.95) {
+  for (const candidate of candidates) {
+    const candidateScore = tokenOverlapScore(parsed.normalizedTitle, candidate);
+
+    if (candidateScore > bestTitleScore) {
+      bestTitleScore = candidateScore;
+      suspiciousExtraTitleTokens = hasSuspiciousExtraTitleTokens(
+        parsed.normalizedTitle,
+        candidate
+      );
+    }
+  }
+
+  if (bestTitleScore >= 0.95 && !suspiciousExtraTitleTokens) {
     score += 45;
     reasons.push('exact-title-token-match');
-  } else if (bestTitleScore >= 0.75) {
+  } else if (bestTitleScore >= 0.75 && !suspiciousExtraTitleTokens) {
     score += 32;
     reasons.push('strong-title-token-match');
-  } else if (bestTitleScore >= 0.5) {
+  } else if (bestTitleScore >= 0.5 && !suspiciousExtraTitleTokens) {
     score += 18;
     reasons.push('partial-title-token-match');
   } else {
     score -= 45;
-    penalties.push('weak-title-token-match');
+    penalties.push(
+      suspiciousExtraTitleTokens
+        ? 'suspicious-extra-title-tokens'
+        : 'weak-title-token-match'
+    );
   }
 
   if (metaType === 'movie') {
@@ -208,7 +253,8 @@ export function scoreReleaseMatch(
     clamped < 45 ||
     penalties.includes('wrong-season') ||
     penalties.includes('wrong-episode') ||
-    penalties.includes('episode-markers-on-movie')
+    penalties.includes('episode-markers-on-movie') ||
+    penalties.includes('suspicious-extra-title-tokens')
   ) {
     decision = 'reject';
   }
