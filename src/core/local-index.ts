@@ -1,5 +1,5 @@
 import type { Stream, StreamMeta } from '../types';
-import { cacheGet, cacheSet } from '../cache/redis';
+import { cacheDelete, cacheGet, cacheSet } from '../cache/redis';
 import { scoreStreamCandidate } from './candidate-match';
 import { candidateSortScore, bucketCandidate } from './candidate-sort';
 import { logger } from '../utils/logger';
@@ -205,6 +205,18 @@ export async function saveManualKnownGoodStreams(
   });
 
   return merged;
+}
+
+
+export async function clearKnownGoodStreams(meta: StreamMeta): Promise<void> {
+  await cacheDelete(localIndexKey(meta));
+
+  logger.info('Cleared local index streams', {
+    key: localIndexKey(meta),
+    imdbId: meta.imdbId,
+    season: meta.season,
+    episode: meta.episode,
+  });
 }
 
 

@@ -16,7 +16,7 @@ import { getDebridStreamUrlByHash } from './torbox';
 import { getStreams } from './providers/streams';
 import { scoreStreamCandidate } from './core/candidate-match';
 import { candidateSortScore, bucketCandidate, sortCandidates } from './core/candidate-sort';
-import { getKnownGoodStreams, localIndexKey, saveManualKnownGoodStreams } from './core/local-index';
+import { clearKnownGoodStreams, getKnownGoodStreams, localIndexKey, saveManualKnownGoodStreams } from './core/local-index';
 
 export function createServer(): express.Application {
   const app = express();
@@ -255,6 +255,57 @@ export function createServer(): express.Application {
       res.status(500).json({
         status: 'error',
         error: err.message || 'debug_local_index_failed',
+      });
+    }
+  });
+
+  app.delete('/debug/local-index/:type/:id.json', async (req: Request, res: Response) => {
+    try {
+      const requiredToken = String(process.env.LOCAL_INDEX_ADMIN_TOKEN || '').trim();
+
+      if (requiredToken) {
+        const suppliedToken = String(
+          req.query.token ||
+          req.header('x-local-index-token') ||
+          ''
+        ).trim();
+
+        if (suppliedToken !== requiredToken) {
+          return res.status(403).json({
+            status: 'error',
+            error: 'local_index_admin_token_required',
+          });
+        }
+      }
+
+      const type = req.params.type as 'movie' | 'series';
+      const rawId = req.params.id;
+
+      const parts = rawId.split(':');
+      const imdbId = parts[0];
+      const season = parts[1] ? parseInt(parts[1], 10) : undefined;
+      const episode = parts[2] ? parseInt(parts[2], 10) : undefined;
+
+      const meta = {
+        id: rawId,
+        imdbId,
+        type,
+        season,
+        episode,
+      };
+
+      await clearKnownGoodStreams(meta);
+
+      res.json({
+        status: 'ok',
+        action: 'deleted',
+        request: { type, id: rawId, imdbId, season, episode },
+        key: localIndexKey(meta),
+      });
+    } catch (err: any) {
+      res.status(400).json({
+        status: 'error',
+        error: err.message || 'clear_local_index_failed',
       });
     }
   });
