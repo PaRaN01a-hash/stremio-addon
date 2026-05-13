@@ -13,7 +13,7 @@ import { parseReleaseTitle } from '../utils/release-parser';
 import { scoreReleaseMatch } from '../utils/match-score';
 import { scoreStreamCandidate } from '../core/candidate-match';
 import { sortCandidates } from '../core/candidate-sort';
-import { saveKnownGoodStreams } from '../core/local-index';
+import { getKnownGoodStreams, saveKnownGoodStreams } from '../core/local-index';
 import {
   filterStreams,
   sortStreams,
@@ -39,6 +39,12 @@ function coreSortStreamsEnabled(): boolean {
 function externalAddonsOnColdLoadEnabled(): boolean {
   const value = String(process.env.EXTERNAL_ADDONS_ON_COLD_LOAD || 'true').toLowerCase();
   return !['0', 'false', 'no', 'off'].includes(value);
+}
+
+function localIndexFirstEnabled(): boolean {
+  return ['1', 'true', 'yes', 'on'].includes(
+    String(process.env.LOCAL_INDEX_FIRST || '').toLowerCase()
+  );
 }
 
 function expectedTitleForCoreMatch(meta: StreamMeta): string {
@@ -914,6 +920,35 @@ export async function getStreams(meta: StreamMeta): Promise<Stream[]> {
 
   const { imdbId, season, episode } = meta;
   const cacheKey = CacheKeys.streams(imdbId, season, episode);
+
+  if (localIndexFirstEnabled()) {
+    const indexed = await getKnownGoodStreams(meta);
+
+    if (indexed.length > 0) {
+      if (stats) stats.cacheHits++;
+
+      const indexedStreams = indexed.map((item) => item.raw);
+
+      logger.info('Local index first hit', {
+        imdbId,
+        season,
+        episode,
+        count: indexedStreams.length,
+      });
+
+      backgroundRefresh(meta, cacheKey);
+
+      return coreSortStreamsEnabled()
+        ? coreSortStreamResults(indexedStreams, meta)
+        : indexedStreams;
+    }
+
+    logger.info('Local index first miss', {
+      imdbId,
+      season,
+      episode,
+    });
+  }
 
   const { value: cached, stale } = await cacheGet<Stream[]>(cacheKey, STREAM_SOFT_TTL, STREAM_HARD_TTL);
 
