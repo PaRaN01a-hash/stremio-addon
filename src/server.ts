@@ -15,6 +15,7 @@ import { logger } from './utils/logger';
 import { getDebridStreamUrlByHash } from './torbox';
 import { getStreams } from './providers/streams';
 import { scoreStreamCandidate } from './core/candidate-match';
+import { candidateSortScore, bucketCandidate } from './core/candidate-sort';
 
 export function createServer(): express.Application {
   const app = express();
@@ -149,7 +150,7 @@ export function createServer(): express.Application {
                 tokens: [],
               };
               const match = scoredCandidate.match;
-            return {
+              return {
               index: index + 1,
               name: stream.name,
               title: stream.title,
@@ -163,6 +164,8 @@ export function createServer(): express.Application {
                 matchSource: scoredCandidate.matchSource,
                 parseable: scoredCandidate.parseable,
                 releaseTitle: scoredCandidate.filename || scoredCandidate.title || scoredCandidate.name || '',
+                bucket: bucketCandidate(scoredCandidate),
+                sortScore: candidateSortScore(scoredCandidate),
               parsedRelease: {
                 normalizedTitle: parsedRelease.normalizedTitle,
                 type: parsedRelease.type,
