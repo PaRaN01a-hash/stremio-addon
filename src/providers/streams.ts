@@ -35,6 +35,11 @@ function coreSortStreamsEnabled(): boolean {
   );
 }
 
+function externalAddonsOnColdLoadEnabled(): boolean {
+  const value = String(process.env.EXTERNAL_ADDONS_ON_COLD_LOAD || 'true').toLowerCase();
+  return !['0', 'false', 'no', 'off'].includes(value);
+}
+
 function expectedTitleForCoreMatch(meta: StreamMeta): string {
   return String(
     (meta as any).title ||
@@ -742,8 +747,18 @@ async function fetchFreshStreams(meta: StreamMeta): Promise<Stream[]> {
 
   const internalStreams = buildStreams(debridResults, httpStreams, season, episode)
       .filter((stream) => streamMatchesRequestedEpisode(stream, meta));
-  const externalStremioStreams = await getExternalStremioStreams(meta.type, meta.id, season, episode);
-  const externalAddonStreams = await getExternalAddonStreams(meta);
+  const includeExternalOnColdLoad = externalAddonsOnColdLoadEnabled();
+
+  const [externalStremioStreams, externalAddonStreams] = includeExternalOnColdLoad
+    ? await Promise.all([
+        getExternalStremioStreams(meta.type, meta.id, season, episode),
+        getExternalAddonStreams(meta),
+      ])
+    : [[], []];
+
+  if (!includeExternalOnColdLoad) {
+    logger.info('External addons skipped on cold load', { imdbId });
+  }
 
   const streams = cleanStreams([
     ...internalStreams,
@@ -876,7 +891,10 @@ export async function getStreams(meta: StreamMeta): Promise<Stream[]> {
   const freshStreams = await fetchFreshStreams(meta);
   if (freshStreams.length > 0) {
     await cacheSet(cacheKey, freshStreams, STREAM_HARD_TTL);
-    // backgroundExternalRefresh(meta, cacheKey, freshStreams); // external addons already included in main response
+
+    if (!externalAddonsOnColdLoadEnabled()) {
+      backgroundExternalRefresh(meta, cacheKey, freshStreams);
+    }
   }
   return freshStreams;
 }
