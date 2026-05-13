@@ -11,6 +11,8 @@ import { getExternalAddonStreams } from './external-addons';
 import { getExternalStremioStreams } from './external-stremio';
 import { parseReleaseTitle } from '../utils/release-parser';
 import { scoreReleaseMatch } from '../utils/match-score';
+import { scoreStreamCandidate } from '../core/candidate-match';
+import { sortCandidates } from '../core/candidate-sort';
 import {
   filterStreams,
   sortStreams,
@@ -25,6 +27,47 @@ const STREAM_HARD_TTL = STREAM_SOFT_TTL * 4; // Keep in Redis 4x longer than sof
 
 function publicBaseUrl(): string {
   return (process.env.PUBLIC_BASE_URL || process.env.BASE_URL || 'http://localhost:6000').replace(/\/$/, '');
+}
+
+function coreSortStreamsEnabled(): boolean {
+  return ['1', 'true', 'yes', 'on'].includes(
+    String(process.env.CORE_SORT_STREAMS || '').toLowerCase()
+  );
+}
+
+function expectedTitleForCoreMatch(meta: StreamMeta): string {
+  return String(
+    (meta as any).title ||
+    (meta as any).name ||
+    expectedSeriesTitle(meta) ||
+    ''
+  ).trim();
+}
+
+function coreSortStreamResults(streams: Stream[], meta: StreamMeta): Stream[] {
+  const expectedTitle = expectedTitleForCoreMatch(meta);
+
+  const scoredCandidates = streams.map((stream: any, index: number) =>
+    scoreStreamCandidate({
+      id: String(stream.url || stream.behaviorHints?.filename || stream.title || stream.name || index),
+      provider: stream.name?.startsWith('[TB+]') ? 'torbox' : 'external-addon',
+      sourceType: stream.name?.startsWith('[TB+]') ? 'cached' : 'external',
+      name: stream.name,
+      title: stream.title,
+      filename: stream.behaviorHints?.filename,
+      description: stream.description,
+      url: stream.url,
+      size: stream.behaviorHints?.videoSize,
+      raw: stream,
+    }, {
+      type: meta.type,
+      title: expectedTitle,
+      season: meta.season,
+      episode: meta.episode,
+    })
+  );
+
+  return sortCandidates(scoredCandidates).map((candidate) => candidate.raw as Stream);
 }
 
 function lazyTorBoxUrl(hash: string, season?: number, episode?: number): string {
@@ -707,13 +750,27 @@ async function fetchFreshStreams(meta: StreamMeta): Promise<Stream[]> {
     ...externalStremioStreams,
     ...externalAddonStreams,
   ]);
-  logger.info(`Fetched ${streams.length} streams for ${imdbId}`, {
+
+  const finalStreams = coreSortStreamsEnabled()
+    ? coreSortStreamResults(streams, meta)
+    : streams;
+
+  if (coreSortStreamsEnabled()) {
+    logger.info('Core stream sorting enabled', {
+      imdbId,
+      before: streams.length,
+      after: finalStreams.length,
+    });
+  }
+
+  logger.info(`Fetched ${finalStreams.length} streams for ${imdbId}`, {
     debrid: debridResults.filter((r) => r.cached).length,
     http: httpStreams.length,
     totalMs: msSince(started),
+    coreSort: coreSortStreamsEnabled(),
   });
 
-  return streams;
+  return finalStreams;
 }
 
 /**
@@ -761,7 +818,11 @@ function backgroundExternalRefresh(meta: StreamMeta, cacheKey: string, baseStrea
         ...safeExternalStreams,
       ]);
 
-      await cacheSet(cacheKey, merged, STREAM_HARD_TTL);
+    const finalMerged = coreSortStreamsEnabled()
+      ? coreSortStreamResults(merged, meta)
+      : merged;
+
+    await cacheSet(cacheKey, finalMerged, STREAM_HARD_TTL);
       if ((globalThis as any).streamStats) {
         (globalThis as any).streamStats.externalRefreshes =
           ((globalThis as any).streamStats.externalRefreshes || 0) + 1;
@@ -802,7 +863,10 @@ export async function getStreams(meta: StreamMeta): Promise<Stream[]> {
       logger.debug('Serving stale cache, refreshing in background', { cacheKey });
       backgroundRefresh(meta, cacheKey);
     }
-    return cleanStreams(cached);
+      const cachedStreams = cleanStreams(cached);
+      return coreSortStreamsEnabled()
+        ? coreSortStreamResults(cachedStreams, meta)
+        : cachedStreams;
   }
 
   // Cache miss — fetch full lazy TorBox stream list now.
