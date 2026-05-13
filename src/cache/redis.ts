@@ -1,10 +1,15 @@
 // src/cache/redis.ts
 import Redis from 'ioredis';
+
+const REDIS_DISABLED = process.env.REDIS_DISABLED === 'true' || process.env.REDIS_DISABLED === '1';
 import { logger } from '../utils/logger';
 
 let client: Redis | null = null;
 
 export function getRedis(): Redis {
+  if (REDIS_DISABLED) {
+    throw new Error('Redis disabled');
+  }
   if (!client) {
     client = new Redis(process.env.REDIS_URL || 'redis://localhost:6379', {
       maxRetriesPerRequest: 2,
@@ -26,6 +31,8 @@ export async function cacheGet<T>(
   softTtl: number,         // seconds — after this, data is "stale" but still served
   hardTtl?: number         // seconds — after this, Redis evicts the key entirely
 ): Promise<{ value: T | null; stale: boolean }> {
+  if (REDIS_DISABLED) return { value: null, stale: false };
+
   try {
     const redis = getRedis();
     const raw = await redis.get(key);
@@ -47,6 +54,8 @@ export async function cacheSet<T>(
   data: T,
   hardTtl: number          // seconds — Redis key expiry
 ): Promise<void> {
+  if (REDIS_DISABLED) return;
+
   try {
     const redis = getRedis();
     const entry = { data, cachedAt: Date.now() };
@@ -58,6 +67,7 @@ export async function cacheSet<T>(
 
 export async function cacheDelete(key: string): Promise<void> {
   try {
+    if (REDIS_DISABLED) return;
     await getRedis().del(key);
   } catch (err) {
     logger.warn('Cache delete failed', { key, err });
@@ -65,6 +75,7 @@ export async function cacheDelete(key: string): Promise<void> {
 }
 
 export async function cacheScan(pattern: string): Promise<string[]> {
+  if (REDIS_DISABLED) return [];
   const redis = getRedis();
   const keys: string[] = [];
   let cursor = '0';

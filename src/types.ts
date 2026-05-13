@@ -6,6 +6,10 @@ export interface StreamMeta {
   imdbId: string;
   season?: number;
   episode?: number;
+
+  // Resolved metadata used for safer search/filtering.
+  title?: string;       // e.g. "Friends"
+  year?: number;        // e.g. 1994
 }
 
 export interface Stream {

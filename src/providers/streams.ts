@@ -8,6 +8,7 @@ import { getHttpFallbackStreams } from '../http-fallback';
 import { buildStreamTitle } from '../utils/quality';
 import { logger } from '../utils/logger';
 import { getExternalAddonStreams } from './external-addons';
+import { getExternalStremioStreams } from './external-stremio';
 import {
   filterStreams,
   sortStreams,
@@ -59,18 +60,42 @@ function streamSize(stream: Stream): number {
 
 function streamKey(stream: Stream): string {
   const anyStream = stream as any;
-  const text = streamText(stream);
-  const binge = anyStream.behaviorHints?.bingeGroup || '';
-  const filename = anyStream.behaviorHints?.filename || '';
-  const hashMatch = `${binge} ${stream.url || ''}`.match(/[a-f0-9]{40}/i);
 
+  const hashSource = [
+    anyStream.infoHash || '',
+    anyStream.behaviorHints?.bingeGroup || '',
+    anyStream.behaviorHints?.filename || '',
+    stream.url || '',
+    stream.name || '',
+    stream.title || '',
+  ].join(' ');
+
+  const hashMatch = hashSource.match(/[a-f0-9]{40}/i);
   if (hashMatch) return `hash:${hashMatch[0].toLowerCase()}`;
-  if (filename) return `file:${String(filename).toLowerCase().replace(/[^a-z0-9]+/g, '')}`;
+
+  const url = String(stream.url || '').trim().toLowerCase();
+  if (url) return `url:${url}`;
+
+  const filename = String(anyStream.behaviorHints?.filename || '')
+    .toLowerCase()
+    .replace(/\[[^\]]+\]/g, '')
+    .replace(/\b(torrentio|comet|hdhub|torbox|tb)\b/g, '')
+    .replace(/[⚡⏳]/g, '')
+    .replace(/[^a-z0-9]+/g, '');
+
+  if (filename) return `file:${filename}`;
+
+  const text = streamText(stream)
+    .replace(/\[[^\]]+\]/g, '')
+    .replace(/\b(torrentio|comet|hdhub|torbox|tb)\b/g, '')
+    .replace(/[⚡⏳]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
 
   const size = streamSize(stream);
-  if (size > 0) return `name:${text.replace(/[^a-z0-9]+/g, '')}:size:${Math.round(size / 50000000)}`;
+  if (size > 0) return `text:${text}:size:${Math.round(size / 50000000)}`;
 
-  return `url:${stream.url || text}`;
+  return `text:${text}`;
 }
 
 function scoreStream(stream: Stream): number {
@@ -138,6 +163,98 @@ function scoreStream(stream: Stream): number {
   return score;
 }
 
+
+function providerQualityKey(stream: Stream): string {
+  const text = streamText(stream);
+  const host = (() => {
+    try { return new URL(String(stream.url || '')).hostname.replace(/^www\./, ''); }
+    catch { return ''; }
+  })();
+
+  let provider = 'other';
+  if (text.includes('comet') || host.includes('comet')) provider = 'comet';
+  else if (text.includes('torrentio') || host.includes('torrentio')) provider = 'torrentio';
+  else if (text.includes('hdhub') || host.includes('hdhub')) provider = 'hdhub';
+
+  let quality = 'unknown';
+  if (text.includes('2160') || text.includes('4k')) quality = '2160p';
+  else if (text.includes('1080')) quality = '1080p';
+  else if (text.includes('720')) quality = '720p';
+
+  return `${provider}:${quality}`;
+}
+
+function capProviderQuality(streams: Stream[], limit = 12): Stream[] {
+  const counts = new Map<string, number>();
+  const out: Stream[] = [];
+
+  for (const stream of streams) {
+    const key = providerQualityKey(stream);
+    const count = counts.get(key) || 0;
+    if (count >= limit) continue;
+    counts.set(key, count + 1);
+    out.push(stream);
+  }
+
+  return out;
+}
+
+
+function isWeakStream(stream: Stream): boolean {
+  const text = streamText(stream);
+  const name = String(stream.name || '').toLowerCase().trim();
+  const title = String(stream.title || '').toLowerCase().trim();
+  const filename = String((stream as any).behaviorHints?.filename || '').toLowerCase();
+  const bingeGroup = String(stream.behaviorHints?.bingeGroup || '').toLowerCase();
+
+  const isTorrentio = text.includes('torrentio');
+  const visible = `${name} ${title}`.toLowerCase().trim();
+
+  const hasQuality =
+    visible.includes('2160') || visible.includes('4k') ||
+    visible.includes('1080') || visible.includes('720') || visible.includes('480') ||
+    filename.includes('2160') || filename.includes('4k') ||
+    filename.includes('1080') || filename.includes('720') || filename.includes('480');
+
+  const hasUsefulSource =
+    visible.includes('web') || visible.includes('bluray') || visible.includes('blu-ray') ||
+    visible.includes('x264') || visible.includes('x265') || visible.includes('hevc') ||
+    visible.includes('hdr') || filename.includes('web') || filename.includes('bluray') ||
+    filename.includes('blu-ray') || filename.includes('x264') || filename.includes('x265') ||
+    filename.includes('hevc') || filename.includes('hdr') ||
+    bingeGroup.match(/web|bluray|blu-ray|hdr|hevc|x265|x264/);
+
+  const torrentioVisibleHasQuality =
+    name.includes('2160') || name.includes('4k') ||
+    name.includes('1080') || name.includes('720') || name.includes('480') ||
+    title.includes('2160') || title.includes('4k') ||
+    title.includes('1080') || title.includes('720') || title.includes('480');
+
+  if (isTorrentio && !torrentioVisibleHasQuality) return true;
+  if (isTorrentio && !hasQuality) return true;
+  if (isTorrentio && !hasUsefulSource && !hasQuality) return true;
+  if (text.includes('unknown') && !hasQuality && !hasUsefulSource) return true;
+  if (!stream.url && !(stream as any).infoHash && !stream.behaviorHints?.bingeGroup) return true;
+
+  return false;
+}
+
+
+function finalVisibleStreamFilter(stream: Stream): boolean {
+  const name = String(stream.name || '').toLowerCase().trim();
+  const title = String(stream.title || '').toLowerCase().trim();
+  const visible = `${name} ${title}`;
+
+  const isTorrentio = visible.includes('torrentio');
+  const hasVisibleQuality =
+    visible.includes('2160') || visible.includes('4k') ||
+    visible.includes('1080') || visible.includes('720') || visible.includes('480');
+
+  if (isTorrentio && !hasVisibleQuality) return false;
+
+  return true;
+}
+
 function cleanStreams(streams: Stream[]): Stream[] {
   const blocked = streams.filter((stream) => {
     const text = streamText(stream);
@@ -159,9 +276,12 @@ function cleanStreams(streams: Stream[]): Stream[] {
     }
   }
 
-  return [...byKey.values()]
-    .sort((a, b) => scoreStream(b) - scoreStream(a))
-    .slice(0, parseInt(process.env.MAX_FINAL_STREAMS || '25'));
+  const sorted = [...byKey.values()]
+      .sort((a, b) => scoreStream(b) - scoreStream(a));
+
+    return capProviderQuality(sorted, parseInt(process.env.MAX_PER_PROVIDER_QUALITY || '2'))
+      .filter(finalVisibleStreamFilter)
+      .slice(0, parseInt(process.env.MAX_FINAL_STREAMS || '40'));
 }
 
 
@@ -188,6 +308,125 @@ function extractHash(stream: Stream): string | null {
   const match = haystack.match(/([a-f0-9]{40})/i);
   return match ? match[1].toLowerCase() : null;
 }
+
+
+
+
+function expectedSeriesTitle(meta: StreamMeta): string {
+  const fallbacks: Record<string, string> = {
+    tt0108778: 'Friends',
+  };
+
+  return String(
+    (meta as any).title ||
+    (meta as any).name ||
+    (meta as any).showName ||
+    fallbacks[meta.imdbId] ||
+    ''
+  )
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function normalizeMatchText(value: unknown): string {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+
+function streamMatchesRequestedEpisode(stream: Stream, meta: StreamMeta): boolean {
+  if (meta.type !== 'series') return true;
+  if (meta.season === undefined || meta.episode === undefined) return true;
+
+  const text = String(
+    (stream as any).filename ||
+    (stream as any).title ||
+    (stream as any).description ||
+    stream.name ||
+    ''
+  )
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '');
+
+  const s = String(meta.season).padStart(2, '0');
+  const e = String(meta.episode).padStart(2, '0');
+
+  const requested = [
+    `s${s}e${e}`,
+    `${Number(meta.season)}x${Number(meta.episode)}`,
+  ];
+
+  const hasAnyEpisode =
+    /s\d{1,2}e\d{1,2}/i.test(text) ||
+    /\d{1,2}x\d{1,2}/i.test(text);
+
+  if (!hasAnyEpisode) return true;
+
+  return requested.some((pattern) => text.includes(pattern));
+}
+
+
+function torrentMatchesExpectedSeries(torrent: { title?: string }, meta: StreamMeta): boolean {
+  if (meta.type !== 'series') return true;
+
+  const expected = expectedSeriesTitle(meta);
+  if (!expected) return true;
+
+  const title = normalizeMatchText(torrent.title || '');
+  if (!title) return false;
+
+  const compactTitle = title.replace(/\s+/g, '');
+
+  // Episode guard:
+  // If the release explicitly names an episode, it must match the requested one.
+  // Season packs are still allowed because TorBox can resolve files inside packs.
+  if (meta.season !== undefined && meta.episode !== undefined) {
+    const s = String(meta.season).padStart(2, '0');
+    const e = String(meta.episode).padStart(2, '0');
+
+    const requestedEpisodePatterns = [
+      `s${s}e${e}`,
+      `${Number(meta.season)}x${Number(meta.episode)}`,
+    ];
+
+    const hasAnyEpisodeMarker =
+      /s\d{1,2}e\d{1,2}/i.test(compactTitle) ||
+      /\b\d{1,2}x\d{1,2}\b/i.test(compactTitle);
+
+    const hasRequestedEpisode = requestedEpisodePatterns.some((pattern) =>
+      compactTitle.includes(pattern)
+    );
+
+    if (hasAnyEpisodeMarker && !hasRequestedEpisode) {
+      return false;
+    }
+  }
+
+  const expectedWords = expected.split(' ').filter(Boolean);
+
+  if (expectedWords.length > 1) {
+    return title.includes(expected);
+  }
+
+  // Single-word series titles like "Friends" must start with the show title.
+  // Allows: "Friends S01E01", "Friends Season 1", "Friends S01-S09".
+  // Blocks: "Smiling Friends", "A Spy Among Friends", "Little House ... Friends".
+  const titleMatches = (
+    title === expected ||
+    title.startsWith(expected + ' ') ||
+    title.startsWith('the ' + expected + ' ')
+  );
+
+  if (!titleMatches) return false;
+
+  return true;
+}
+
 
 function qualityScore(stream: Stream): number {
   const text = `${stream.name} ${stream.title}`.toLowerCase();
@@ -254,10 +493,20 @@ function buildStreams(
       torrent.source ||
       'Scene';
 
-    const weakRelease = ['com', 'net', 'org', 'mkv', 'mp4', 'avi', 'www'].includes(String(release).toLowerCase());
+    const weakRelease = [
+        'com', 'net', 'org', 'mkv', 'mp4', 'avi', 'www',
+        'p', 'extended', 'unknown'
+      ].includes(String(release).toLowerCase());
     const cleanRelease = weakRelease ? (torrent.source || 'Scene') : release;
 
-    const streamName = `${badge} ${torrent.quality} • ${cleanRelease}${featureText ? ' • ' + featureText : ''}`;
+    const inferredQuality =
+        titleUpper.includes('2160') || titleUpper.includes('4K') ? '4K' :
+        titleUpper.includes('1080') ? '1080p' :
+        titleUpper.includes('720') ? '720p' :
+        titleUpper.includes('480') ? '480p' :
+        torrent.quality;
+
+      const streamName = `${badge} ${inferredQuality} • ${cleanRelease}${featureText ? ' • ' + featureText : ''}`;
 
     const sourceLine = `${torrent.source || 'Unknown'}${torrent.source === 'Zilean-DMM' ? ' Lazy Movie | zilean_dmm' : ''}`;
 
@@ -336,7 +585,7 @@ const filtered = filterStreams(normalized);
 const deduped = dedupeStreams(filtered);
 const providerCapped = capStreamsPerProvider(deduped);
 const capped = capStreamsPerQuality(providerCapped);
-const sorted = sortStreams(capped);
+  const sorted = sortStreams(capped);
 
 return sorted.map(s => s.raw);
 
@@ -383,18 +632,36 @@ async function fetchFreshStreams(meta: StreamMeta): Promise<Stream[]> {
 
   // Resolve torrents through TorBox
   const torboxStart = Date.now();
-  const debridResults = await resolveDebrid(torrents, season, episode);
+  const titleGuardedTorrents = torrents.filter((torrent) => torrentMatchesExpectedSeries(torrent, meta));
+    if (titleGuardedTorrents.length !== torrents.length) {
+      logger.info('Series title guard filtered torrents', {
+        imdbId,
+        before: torrents.length,
+        after: titleGuardedTorrents.length,
+      });
+    }
+
+    const debridResults = await resolveDebrid(titleGuardedTorrents, season, episode);
   if ((globalThis as any).streamStats) {
     (globalThis as any).streamStats.torboxMs = msSince(torboxStart);
   }
   logger.info('TorBox resolveDebrid complete', {
     imdbId,
     ms: msSince(torboxStart),
-    torrents: torrents.length,
+    torrents: titleGuardedTorrents.length,
     cached: debridResults.filter((r) => r.cached).length,
   });
 
-  const streams = cleanStreams(buildStreams(debridResults, httpStreams, season, episode));
+  const internalStreams = buildStreams(debridResults, httpStreams, season, episode)
+      .filter((stream) => streamMatchesRequestedEpisode(stream, meta));
+  const externalStremioStreams = await getExternalStremioStreams(meta.type, meta.id, season, episode);
+  const externalAddonStreams = await getExternalAddonStreams(meta);
+
+  const streams = cleanStreams([
+    ...internalStreams,
+    ...externalStremioStreams,
+    ...externalAddonStreams,
+  ]);
   logger.info(`Fetched ${streams.length} streams for ${imdbId}`, {
     debrid: debridResults.filter((r) => r.cached).length,
     http: httpStreams.length,
@@ -418,10 +685,37 @@ function backgroundRefresh(meta: StreamMeta, cacheKey: string): void {
 }
 
 function backgroundExternalRefresh(meta: StreamMeta, cacheKey: string, baseStreams: Stream[]): void {
+  logger.info('External mixer meta debug', { meta });
   getExternalAddonStreams(meta)
     .then(async (externalStreams) => {
       if (!externalStreams.length) return;
-      const merged = cleanStreams([...baseStreams, ...externalStreams]);
+      // External addons can be noisy for series search terms like "Friends".
+      // Keep Maximus/TB+ streams as the anchor, then add only a small filtered external sample.
+      const expectedTitle = String((meta as any).title || (meta as any).name || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+
+      const looksLikeExpectedSeries = (stream: Stream) => {
+        if (!((meta as any).season || (meta as any).episode) || !expectedTitle) return true;
+
+        const haystack = [
+          stream.name,
+          stream.title,
+          stream.description,
+          (stream as any).filename,
+        ].filter(Boolean).join(' ').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+
+        // For short/simple show names, require the exact normalized title as a word-ish phrase.
+        return haystack.includes(expectedTitle);
+      };
+
+      const safeExternalStreams = externalStreams
+        .filter(looksLikeExpectedSeries)
+        .slice(0, parseInt(process.env.MAX_EXTERNAL_STREAMS || '4'));
+
+      const merged = cleanStreams([
+        ...baseStreams,
+        ...safeExternalStreams,
+      ]);
+
       await cacheSet(cacheKey, merged, STREAM_HARD_TTL);
       if ((globalThis as any).streamStats) {
         (globalThis as any).streamStats.externalRefreshes =
@@ -473,7 +767,7 @@ export async function getStreams(meta: StreamMeta): Promise<Stream[]> {
   const freshStreams = await fetchFreshStreams(meta);
   if (freshStreams.length > 0) {
     await cacheSet(cacheKey, freshStreams, STREAM_HARD_TTL);
-    backgroundExternalRefresh(meta, cacheKey, freshStreams);
+    // backgroundExternalRefresh(meta, cacheKey, freshStreams); // external addons already included in main response
   }
   return freshStreams;
 }
