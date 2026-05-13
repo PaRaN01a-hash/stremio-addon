@@ -366,6 +366,7 @@ function expectedSeriesTitle(meta: StreamMeta): string {
   const fallbacks: Record<string, string> = {
     tt0108778: 'Friends',
     tt9813792: 'From',
+    tt1877005: 'Moonshiners',
   };
 
   return String(
