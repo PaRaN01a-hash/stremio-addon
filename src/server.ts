@@ -261,6 +261,23 @@ export function createServer(): express.Application {
 
   app.post('/debug/local-index/:type/:id.json', async (req: Request, res: Response) => {
     try {
+      const requiredToken = String(process.env.LOCAL_INDEX_ADMIN_TOKEN || '').trim();
+
+      if (requiredToken) {
+        const suppliedToken = String(
+          req.query.token ||
+          req.header('x-local-index-token') ||
+          ''
+        ).trim();
+
+        if (suppliedToken !== requiredToken) {
+          return res.status(403).json({
+            status: 'error',
+            error: 'local_index_admin_token_required',
+          });
+        }
+      }
+
       const type = req.params.type as 'movie' | 'series';
       const rawId = req.params.id;
 
