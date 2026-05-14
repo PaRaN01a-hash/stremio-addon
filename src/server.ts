@@ -16,7 +16,7 @@ import { getDebridStreamUrlByHash } from './torbox';
 import { getStreams, localIndexFirstEnabled, coreSortStreamsEnabled, externalAddonsOnColdLoadEnabled } from './providers/streams';
 import { scoreStreamCandidate } from './core/candidate-match';
 import { candidateSortScore, bucketCandidate, sortCandidates } from './core/candidate-sort';
-import { clearKnownGoodStreams, getKnownGoodStreams, localIndexKey, saveManualKnownGoodStreams } from './core/local-index';
+import { clearKnownGoodStreams, getKnownGoodStreams, getLocalIndexStats, localIndexKey, saveManualKnownGoodStreams } from './core/local-index';
 
 export function createServer(): express.Application {
   const app = express();
@@ -88,6 +88,19 @@ export function createServer(): express.Application {
 
 
   // Lightweight stats endpoint
+
+  app.get('/debug/local-index/stats.json', async (_req: Request, res: Response) => {
+    try {
+      const stats = await getLocalIndexStats();
+      res.json(stats);
+    } catch (err: any) {
+      res.status(500).json({
+        status: 'error',
+        error: err?.message || 'local_index_stats_failed',
+      });
+    }
+  });
+
   app.get('/debug/streams/:type/:id.json', async (req: Request, res: Response) => {
     try {
       const type = req.params.type as 'movie' | 'series';

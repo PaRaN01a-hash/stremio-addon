@@ -1,5 +1,5 @@
 import type { Stream, StreamMeta } from '../types';
-import { cacheDelete, cacheGet, cacheSet } from '../cache/redis';
+import { cacheDelete, cacheGet, cacheSet, cacheScan } from '../cache/redis';
 import { scoreStreamCandidate } from './candidate-match';
 import { candidateSortScore, bucketCandidate } from './candidate-sort';
 import { logger } from '../utils/logger';
@@ -334,3 +334,87 @@ export async function getKnownGoodStreams(meta: StreamMeta): Promise<LocalIndexe
 
   return value || [];
 }
+
+export async function getLocalIndexStats(): Promise<any> {
+  const keys = await cacheScan('local:index:streams:*');
+
+  const stats = {
+    status: 'ok',
+    keyCount: keys.length,
+    rememberedItems: 0,
+    totalStreams: 0,
+    movieItems: 0,
+    seriesItems: 0,
+    resolverUrlCount: 0,
+    externalUrlCount: 0,
+    acceptedCount: 0,
+    nonAcceptedCount: 0,
+    buckets: {} as Record<string, number>,
+    oldestIndexedAt: null as string | null,
+    newestIndexedAt: null as string | null,
+    topItems: [] as any[],
+  };
+
+  const items: any[] = [];
+
+  for (const key of keys) {
+    const { value } = await cacheGet<LocalIndexedStream[]>(key, LOCAL_INDEX_TTL, LOCAL_INDEX_TTL);
+    const streams = Array.isArray(value) ? value : [];
+
+    if (!streams.length) continue;
+
+    const first = streams[0];
+    const type = first.type || (key.split(':').length > 4 ? 'series' : 'movie');
+
+    stats.rememberedItems++;
+    stats.totalStreams += streams.length;
+
+    if (type === 'series') stats.seriesItems++;
+    else stats.movieItems++;
+
+    for (const stream of streams) {
+      const url = String(stream.url || '');
+
+      if (url.includes('/resolve?hash=')) stats.resolverUrlCount++;
+      else stats.externalUrlCount++;
+
+      if (stream.matchDecision === 'accept') stats.acceptedCount++;
+      else stats.nonAcceptedCount++;
+
+      const bucket = stream.bucket || 'unknown';
+      stats.buckets[bucket] = (stats.buckets[bucket] || 0) + 1;
+
+      if (stream.indexedAt) {
+        if (!stats.oldestIndexedAt || stream.indexedAt < stats.oldestIndexedAt) {
+          stats.oldestIndexedAt = stream.indexedAt;
+        }
+        if (!stats.newestIndexedAt || stream.indexedAt > stats.newestIndexedAt) {
+          stats.newestIndexedAt = stream.indexedAt;
+        }
+      }
+    }
+
+    items.push({
+      key,
+      type,
+      imdbId: first.imdbId,
+      season: first.season,
+      episode: first.episode,
+      streamCount: streams.length,
+      topStream: streams[0]?.name,
+      topBucket: streams[0]?.bucket,
+      topSortScore: streams[0]?.sortScore,
+      indexedAt: streams[0]?.indexedAt,
+    });
+  }
+
+  stats.topItems = items
+    .sort((a, b) => {
+      if (b.streamCount !== a.streamCount) return b.streamCount - a.streamCount;
+      return String(b.indexedAt || '').localeCompare(String(a.indexedAt || ''));
+    })
+    .slice(0, 20);
+
+  return stats;
+}
+
