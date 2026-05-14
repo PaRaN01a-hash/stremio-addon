@@ -30,18 +30,18 @@ function publicBaseUrl(): string {
   return (process.env.PUBLIC_BASE_URL || process.env.BASE_URL || 'http://localhost:6000').replace(/\/$/, '');
 }
 
-function coreSortStreamsEnabled(): boolean {
+export function coreSortStreamsEnabled(): boolean {
   return ['1', 'true', 'yes', 'on'].includes(
     String(process.env.CORE_SORT_STREAMS || '').toLowerCase()
   );
 }
 
-function externalAddonsOnColdLoadEnabled(): boolean {
+export function externalAddonsOnColdLoadEnabled(): boolean {
   const value = String(process.env.EXTERNAL_ADDONS_ON_COLD_LOAD || 'true').toLowerCase();
   return !['0', 'false', 'no', 'off'].includes(value);
 }
 
-function localIndexFirstEnabled(): boolean {
+export function localIndexFirstEnabled(): boolean {
   const value = String(process.env.LOCAL_INDEX_FIRST || '').trim().toLowerCase();
 
   // Maximus memory-first is now the default.

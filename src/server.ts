@@ -13,7 +13,7 @@ import express, { Request, Response } from 'express';
 import { manifest, streamHandler } from './addon';
 import { logger } from './utils/logger';
 import { getDebridStreamUrlByHash } from './torbox';
-import { getStreams } from './providers/streams';
+import { getStreams, localIndexFirstEnabled, coreSortStreamsEnabled, externalAddonsOnColdLoadEnabled } from './providers/streams';
 import { scoreStreamCandidate } from './core/candidate-match';
 import { candidateSortScore, bucketCandidate, sortCandidates } from './core/candidate-sort';
 import { clearKnownGoodStreams, getKnownGoodStreams, localIndexKey, saveManualKnownGoodStreams } from './core/local-index';
@@ -376,6 +376,37 @@ export function createServer(): express.Application {
         error: err.message || 'manual_local_index_failed',
       });
     }
+  });
+
+  app.get('/debug/engine', async (_req: Request, res: Response) => {
+    const stats = (globalThis as any).streamStats || {};
+
+    res.json({
+      status: 'ok',
+      service: 'maximus-core-engine',
+      timestamp: new Date().toISOString(),
+      flags: {
+        localIndexFirst: localIndexFirstEnabled(),
+        coreSortStreams: coreSortStreamsEnabled(),
+        externalAddonsOnColdLoad: externalAddonsOnColdLoadEnabled(),
+      },
+      env: {
+        publicBaseUrl: process.env.PUBLIC_BASE_URL || process.env.BASE_URL || null,
+        localIndexTtl: process.env.LOCAL_INDEX_TTL || String(60 * 60 * 24 * 30),
+        streamSoftTtl: process.env.STREAM_SOFT_TTL || null,
+        streamHardTtl: process.env.STREAM_HARD_TTL || null,
+        localIndexAdminTokenConfigured: Boolean(String(process.env.LOCAL_INDEX_ADMIN_TOKEN || '').trim()),
+      },
+      stats: {
+        requests: stats.requests || 0,
+        cacheHits: stats.cacheHits || 0,
+        cacheMisses: stats.cacheMisses || 0,
+        lastRequest: stats.lastRequest || null,
+        externalRefreshes: stats.externalRefreshes || 0,
+        externalLastCount: stats.externalLastCount || 0,
+        torboxMs: stats.torboxMs || null,
+      },
+    });
   });
 
   app.get('/stats', (_req: Request, res: Response) => {
