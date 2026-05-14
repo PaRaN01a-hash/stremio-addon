@@ -734,15 +734,92 @@ return sorted.map(s => s.raw);
 /**
  * Fetch fresh streams from all providers (Jackett → TorBox + HTTP fallback).
  */
+function calculateProviderQuality(providerLast: Record<string, any>): Record<string, any> {
+  const zileanCount = Number(providerLast.zileanCount || 0);
+  const jackettCount = Number(providerLast.jackettCount || 0);
+  const uniqueTorrentCount = Number(providerLast.uniqueTorrentCount || 0);
+  const titleGuardedTorrentCount = Number(providerLast.titleGuardedTorrentCount || 0);
+  const titleGuardRejected = Number(providerLast.titleGuardRejected || 0);
+  const torboxCandidateTorrents = Number(providerLast.torboxCandidateTorrents || 0);
+  const torboxCached = Number(providerLast.torboxCached || 0);
+  const externalAddonCount = Number(providerLast.externalAddonCount || 0);
+  const externalStremioCount = Number(providerLast.externalStremioCount || 0);
+  const internalStreamCount = Number(providerLast.internalStreamCount || 0);
+  const finalStreamCount = Number(providerLast.finalStreamCount || 0);
+  const totalMs = Number(providerLast.totalMs || 0);
+
+  const titleGuardRejectRate = uniqueTorrentCount > 0
+    ? Number((titleGuardRejected / uniqueTorrentCount).toFixed(3))
+    : 0;
+
+  const torboxCacheRate = torboxCandidateTorrents > 0
+    ? Number((torboxCached / torboxCandidateTorrents).toFixed(3))
+    : 0;
+
+  const externalCount = externalAddonCount + externalStremioCount;
+  const internalShare = finalStreamCount > 0
+    ? Number((internalStreamCount / finalStreamCount).toFixed(3))
+    : 0;
+
+  const jackettNoiseLevel =
+    jackettCount === 0 ? 'none' :
+    titleGuardRejectRate >= 0.75 ? 'high' :
+    titleGuardRejectRate >= 0.4 ? 'medium' :
+    'low';
+
+  const torboxGrade =
+    torboxCacheRate >= 0.7 ? 'excellent' :
+    torboxCacheRate >= 0.4 ? 'good' :
+    torboxCacheRate > 0 ? 'weak' :
+    'none';
+
+  const speedGrade =
+    totalMs > 0 && totalMs <= 2000 ? 'fast' :
+    totalMs <= 8000 ? 'ok' :
+    totalMs <= 20000 ? 'slow' :
+    'very_slow';
+
+  let overallScore = 0;
+  overallScore += Math.min(zileanCount, 20) * 2;
+  overallScore += Math.min(torboxCached, 10) * 12;
+  overallScore += Math.min(internalStreamCount, 10) * 8;
+  overallScore += Math.min(externalCount, 10) * 2;
+  overallScore -= Math.round(titleGuardRejectRate * 30);
+  overallScore -= totalMs > 20000 ? 20 : totalMs > 8000 ? 10 : 0;
+
+  overallScore = Math.max(0, Math.min(100, overallScore));
+
+  return {
+    overallScore,
+    speedGrade,
+    torboxGrade,
+    torboxCacheRate,
+    jackettNoiseLevel,
+    titleGuardRejectRate,
+    internalShare,
+    signals: {
+      zileanUseful: zileanCount > 0,
+      jackettUsed: jackettCount > 0,
+      jackettNoisy: jackettNoiseLevel === 'high',
+      torboxStrong: torboxGrade === 'excellent' || torboxGrade === 'good',
+      externalContributed: externalCount > 0,
+      fastEnough: speedGrade === 'fast' || speedGrade === 'ok',
+    },
+  };
+}
+
 function updateProviderStats(patch: Record<string, any>): void {
   const stats = (globalThis as any).streamStats;
   if (!stats) return;
 
-  stats.providerLast = {
+  const providerLast = {
     ...(stats.providerLast || {}),
     ...patch,
     updatedAt: new Date().toISOString(),
   };
+
+  providerLast.quality = calculateProviderQuality(providerLast);
+  stats.providerLast = providerLast;
 }
 
 async function fetchFreshStreams(meta: StreamMeta): Promise<Stream[]> {
