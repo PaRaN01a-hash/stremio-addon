@@ -859,9 +859,20 @@ async function fetchFreshStreams(meta: StreamMeta): Promise<Stream[]> {
   });
 
   const minZilean = parseInt(process.env.ZILEAN_MIN_RESULTS_BEFORE_JACKETT || '20');
-  const jackettTorrents = zileanTorrents.length >= minZilean
-    ? []
-    : await searchJackett(imdbId, type, season, episode);
+  const shouldUseJackett = zileanTorrents.length < minZilean;
+
+  updateProviderStats({
+    jackettDecision: {
+      used: shouldUseJackett,
+      reason: shouldUseJackett ? 'zilean_below_threshold' : 'zilean_met_threshold',
+      threshold: minZilean,
+      zileanCount: zileanTorrents.length,
+    },
+  });
+
+  const jackettTorrents = shouldUseJackett
+    ? await searchJackett(imdbId, type, season, episode)
+    : [];
 
   // Zilean/DMM first, Jackett only if Zilean is weak. Dedup by infoHash before TorBox check.
   const seenHashes = new Set<string>();
