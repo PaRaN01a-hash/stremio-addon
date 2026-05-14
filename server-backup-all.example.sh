@@ -76,6 +76,21 @@ cp /home/ubuntu/programs/filebrowser/data/filebrowser.db "$WORK_DIR/" 2>/dev/nul
 # -------------------------
 # Maximus local index memory
 # -------------------------
+# -------------------------
+# Maximus memory prewarm
+# -------------------------
+echo "🌱 Prewarming Maximus local-index memory..."
+
+if [ -x /home/ubuntu/stremio-addon/scripts/core-engine-prewarm.py ]; then
+  /home/ubuntu/stremio-addon/scripts/core-engine-prewarm.py \
+    --base http://localhost:6000 \
+    --seeds /home/ubuntu/stremio-addon/data/core-engine-prewarm-seeds.json \
+    --timeout 90 \
+    || echo "⚠️ Maximus prewarm had warnings, continuing backup"
+else
+  echo "⚠️ Maximus prewarm tool not found, skipping"
+fi
+
 echo "🧠 Exporting Maximus local-index memory..."
 
 if [ -x /home/ubuntu/stremio-addon/scripts/local-index-memory.py ]; then
