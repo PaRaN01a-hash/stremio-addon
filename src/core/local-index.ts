@@ -97,6 +97,30 @@ function expectedTitle(meta: StreamMeta, fallbackTitle?: string): string {
   ).trim();
 }
 
+function maximusMemoryLabel(stream: any): any {
+  return stream?.behaviorHints?.maximus;
+}
+
+function isResolverUrl(url?: string): boolean {
+  return Boolean(url && /\/resolve\?hash=/i.test(url));
+}
+
+function isMemoryEligibleStream(stream: any, scored: any): boolean {
+  const label = maximusMemoryLabel(stream);
+  const url = scored?.url || stream?.url;
+
+  if (!url) return false;
+  if (scored?.match?.decision !== 'accept') return false;
+
+  // If v2.3 labels exist, trust the passport but keep the scored accept/url guard above.
+  if (label) {
+    return Boolean(label.memoryEligible === true || label.matchDecision === 'accept');
+  }
+
+  // Backward compatibility for streams created before labels existed.
+  return isResolverUrl(url) || scored?.sourceType === 'cached';
+}
+
 export async function saveKnownGoodStreams(
   meta: StreamMeta,
   streams: Stream[],
