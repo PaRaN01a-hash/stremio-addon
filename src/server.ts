@@ -17,6 +17,7 @@ import { getStreams, localIndexFirstEnabled, coreSortStreamsEnabled, externalAdd
 import { scoreStreamCandidate } from './core/candidate-match';
 import { candidateSortScore, bucketCandidate, sortCandidates } from './core/candidate-sort';
 import { clearKnownGoodStreams, getKnownGoodStreams, getLocalIndexStats, localIndexKey, saveManualKnownGoodStreams } from './core/local-index';
+import { getSourceRegistry } from './core/source-registry';
 
 export function createServer(): express.Application {
   const app = express();
@@ -86,6 +87,11 @@ export function createServer(): express.Application {
     res.json({ status: 'ok', version: manifest.version, name: manifest.name });
   });
 
+
+
+  app.get('/debug/sources.json', (_req: Request, res: Response) => {
+    res.json(getSourceRegistry());
+  });
 
   // Lightweight stats endpoint
 
