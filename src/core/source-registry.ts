@@ -32,6 +32,7 @@ export function getSourceRegistry(): Record<string, any> {
 
   const externalStreamAddonCount = listCount(process.env.EXTERNAL_STREAM_ADDONS);
   const streamthruManifestCount = listCount(process.env.STREAMTHRU_MANIFEST_URLS);
+  const prowlarrTorznabCount = listCount(process.env.PROWLARR_TORZNAB_URLS);
   const externalStremioAddonCount = listCount(process.env.EXTERNAL_STREMIO_ADDONS);
 
   return {
@@ -129,6 +130,23 @@ export function getSourceRegistry(): Record<string, any> {
         role: 'Fallback direct HTTP stream provider if configured internally',
         last: {
           count: last.httpStreamCount,
+        },
+      },
+      {
+        id: 'prowlarr',
+        name: 'Prowlarr Torznab',
+        kind: 'torznab',
+        wired: true,
+        enabled: prowlarrTorznabCount > 0,
+        configuredCount: prowlarrTorznabCount,
+        coldLoadEnabled: envBool('PROWLARR_ON_COLD_LOAD', false),
+        priority: 35,
+        maxResults: envNumber('PROWLARR_MAX_RESULTS', 40),
+        role: 'Self-hosted Torznab torrent discovery lane, feeding TorBox and Maximus memory',
+        last: {
+          count: last.prowlarrCount || 0,
+          decision: last.prowlarrDecision || {},
+          useful: last.quality?.signals?.prowlarrUseful,
         },
       },
       {

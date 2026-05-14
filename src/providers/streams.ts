@@ -2,6 +2,7 @@
 import { Stream, StreamMeta, HttpStream } from '../types';
 import { cacheGet, cacheSet, CacheKeys } from '../cache/redis';
 import { searchJackett } from '../jackett';
+import { searchProwlarr } from '../prowlarr';
 import { searchZilean } from '../zilean';
 import { resolveDebrid } from '../torbox';
 import { getHttpFallbackStreams } from '../http-fallback';
@@ -806,6 +807,7 @@ function calculateProviderQuality(providerLast: Record<string, any>): Record<str
   const torboxCached = Number(providerLast.torboxCached || 0);
   const externalAddonCount = Number(providerLast.externalAddonCount || 0);
   const externalStremioCount = Number(providerLast.externalStremioCount || 0);
+  const prowlarrCount = Number(providerLast.prowlarrCount || 0);
   const internalStreamCount = Number(providerLast.internalStreamCount || 0);
   const finalStreamCount = Number(providerLast.finalStreamCount || 0);
   const totalMs = Number(providerLast.totalMs || 0);
@@ -846,6 +848,7 @@ function calculateProviderQuality(providerLast: Record<string, any>): Record<str
   overallScore += Math.min(torboxCached, 10) * 12;
   overallScore += Math.min(internalStreamCount, 10) * 8;
   overallScore += Math.min(externalCount, 10) * 2;
+  overallScore += Math.min(prowlarrCount, 10) * 4;
   overallScore -= Math.round(titleGuardRejectRate * 30);
   overallScore -= totalMs > 20000 ? 20 : totalMs > 8000 ? 10 : 0;
 
@@ -865,6 +868,7 @@ function calculateProviderQuality(providerLast: Record<string, any>): Record<str
       jackettNoisy: jackettNoiseLevel === 'high',
       torboxStrong: torboxGrade === 'excellent' || torboxGrade === 'good',
       externalContributed: externalCount > 0,
+      prowlarrUseful: prowlarrCount > 0,
       fastEnough: speedGrade === 'fast' || speedGrade === 'ok',
     },
   };
@@ -922,6 +926,11 @@ async function fetchFreshStreams(meta: StreamMeta): Promise<Stream[]> {
 
   const minZilean = parseInt(process.env.ZILEAN_MIN_RESULTS_BEFORE_JACKETT || '10');
   const shouldUseJackett = zileanTorrents.length < minZilean;
+  const prowlarrOnColdLoad = ['1', 'true', 'yes', 'on'].includes(
+    String(process.env.PROWLARR_ON_COLD_LOAD || 'false').toLowerCase()
+  );
+  const prowlarrConfigured = Boolean(String(process.env.PROWLARR_TORZNAB_URLS || '').trim());
+  const shouldUseProwlarr = prowlarrConfigured && (prowlarrOnColdLoad || shouldUseJackett);
 
   updateProviderStats({
     jackettDecision: {
@@ -930,15 +939,29 @@ async function fetchFreshStreams(meta: StreamMeta): Promise<Stream[]> {
       threshold: minZilean,
       zileanCount: zileanTorrents.length,
     },
+    prowlarrDecision: {
+      used: shouldUseProwlarr,
+      reason: !prowlarrConfigured
+        ? 'not_configured'
+        : shouldUseProwlarr
+          ? (prowlarrOnColdLoad ? 'cold_load_enabled' : 'zilean_below_threshold')
+          : 'cold_load_disabled_zilean_met_threshold',
+      coldLoadEnabled: prowlarrOnColdLoad,
+      configured: prowlarrConfigured,
+    },
   });
 
   const jackettTorrents = shouldUseJackett
     ? await searchJackett(imdbId, type, season, episode)
     : [];
 
-  // Zilean/DMM first, Jackett only if Zilean is weak. Dedup by infoHash before TorBox check.
+  const prowlarrTorrents = shouldUseProwlarr
+    ? await searchProwlarr(meta)
+    : [];
+
+  // Zilean/DMM first, then fallback torrent lanes. Dedup by infoHash before TorBox check.
   const seenHashes = new Set<string>();
-  const torrents = [...zileanTorrents, ...jackettTorrents].filter((torrent) => {
+  const torrents = [...zileanTorrents, ...jackettTorrents, ...prowlarrTorrents].filter((torrent) => {
     const hash = torrent.infoHash?.toLowerCase();
     if (!hash || seenHashes.has(hash)) return false;
     seenHashes.add(hash);
@@ -947,6 +970,7 @@ async function fetchFreshStreams(meta: StreamMeta): Promise<Stream[]> {
 
   updateProviderStats({
     jackettCount: jackettTorrents.length,
+    prowlarrCount: prowlarrTorrents.length,
     uniqueTorrentCount: torrents.length,
   });
 
