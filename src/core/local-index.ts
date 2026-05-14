@@ -66,27 +66,52 @@ function lazyResolveUrlFromHash(infoHashInput: unknown, meta: StreamMeta): strin
   return url.toString();
 }
 
+function extractInfoHashFromText(value: unknown): string | undefined {
+  const normalized = normalizeInfoHash(value);
+  if (normalized) return normalized;
+
+  const match = String(value || '').match(/[a-f0-9]{40}/i);
+  return match ? match[0].toLowerCase() : undefined;
+}
+
 function streamInfoHash(stream: any): string | undefined {
-  return normalizeInfoHash(
-    stream?.infoHash ||
-    stream?.infohash ||
-    stream?.info_hash ||
-    stream?.hash ||
-    stream?.behaviorHints?.infoHash ||
-    stream?.behaviorHints?.infohash ||
-    stream?.behaviorHints?.hash ||
-    stream?.url ||
-    stream?.externalUrl ||
-    stream?.title ||
-    stream?.name ||
-    stream?.description ||
-    stream?.behaviorHints?.filename
-  );
+  const candidates = [
+    stream?.infoHash,
+    stream?.infohash,
+    stream?.info_hash,
+    stream?.hash,
+    stream?.behaviorHints?.infoHash,
+    stream?.behaviorHints?.infohash,
+    stream?.behaviorHints?.hash,
+    stream?.url,
+    stream?.externalUrl,
+    stream?.title,
+    stream?.name,
+    stream?.description,
+    stream?.behaviorHints?.filename,
+  ];
+
+  for (const candidate of candidates) {
+    const hash = extractInfoHashFromText(candidate);
+    if (hash) return hash;
+  }
+
+  return undefined;
 }
 
 function streamUrlWithInfoHashFallback(stream: any, meta: StreamMeta): string | undefined {
-  return stream?.url || lazyResolveUrlFromHash(streamInfoHash(stream), meta);
+  const originalUrl = String(stream?.url || '').trim() || undefined;
+  const hash = streamInfoHash(stream);
+
+  // If any stream, internal or external, exposes an infoHash, prefer our own resolver.
+  // This turns external addon discoveries into Maximus-owned memory.
+  if (hash && (!originalUrl || !isResolverUrl(originalUrl))) {
+    return lazyResolveUrlFromHash(hash, meta);
+  }
+
+  return originalUrl || lazyResolveUrlFromHash(hash, meta);
 }
+
 
 function expectedTitle(meta: StreamMeta, fallbackTitle?: string): string {
   return String(
