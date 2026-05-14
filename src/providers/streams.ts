@@ -920,7 +920,7 @@ async function fetchFreshStreams(meta: StreamMeta): Promise<Stream[]> {
     httpStreamCount: httpStreams.length,
   });
 
-  const minZilean = parseInt(process.env.ZILEAN_MIN_RESULTS_BEFORE_JACKETT || '20');
+  const minZilean = parseInt(process.env.ZILEAN_MIN_RESULTS_BEFORE_JACKETT || '10');
   const shouldUseJackett = zileanTorrents.length < minZilean;
 
   updateProviderStats({
