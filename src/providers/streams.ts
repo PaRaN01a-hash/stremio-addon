@@ -12,7 +12,7 @@ import { getExternalStremioStreams } from './external-stremio';
 import { parseReleaseTitle } from '../utils/release-parser';
 import { scoreReleaseMatch } from '../utils/match-score';
 import { scoreStreamCandidate } from '../core/candidate-match';
-import { sortCandidates } from '../core/candidate-sort';
+import { sortCandidates, bucketCandidate, candidateSortScore } from '../core/candidate-sort';
 import { getKnownGoodStreams, saveKnownGoodStreams } from '../core/local-index';
 import {
   filterStreams,
@@ -60,14 +60,74 @@ function expectedTitleForCoreMatch(meta: StreamMeta): string {
   ).trim();
 }
 
+function maximusProviderForStream(stream: any): 'torbox' | 'external-addon' | 'http-fallback' | 'local-index' {
+  const name = String(stream?.name || '');
+  const url = String(stream?.url || '');
+
+  if (stream?.behaviorHints?.maximus?.provider) {
+    return stream.behaviorHints.maximus.provider;
+  }
+
+  if (name.startsWith('[TB+]')) return 'torbox';
+  if (name.startsWith('[HTTP]')) return 'http-fallback';
+  if (url.includes('/resolve?hash=')) return 'torbox';
+
+  return 'external-addon';
+}
+
+function maximusSourceTypeForStream(stream: any): 'cached' | 'external' | 'http' | 'unknown' {
+  const name = String(stream?.name || '');
+  const url = String(stream?.url || '');
+
+  if (stream?.behaviorHints?.maximus?.sourceType) {
+    return stream.behaviorHints.maximus.sourceType;
+  }
+
+  if (name.startsWith('[TB+]') || url.includes('/resolve?hash=')) return 'cached';
+  if (name.startsWith('[HTTP]')) return 'http';
+  if (url) return 'external';
+
+  return 'unknown';
+}
+
+function withMaximusLabels(stream: any, candidate: any): Stream {
+  const bucket = bucketCandidate(candidate);
+  const sortScore = candidateSortScore(candidate);
+  const matchDecision = candidate.match?.decision || 'unknown';
+  const matchScore = candidate.match?.score;
+
+  return {
+    ...stream,
+    behaviorHints: {
+      ...(stream.behaviorHints || {}),
+      maximus: {
+        ...(stream.behaviorHints?.maximus || {}),
+        provider: candidate.provider,
+        sourceType: candidate.sourceType,
+        bucket,
+        sortScore,
+        matchDecision,
+        matchScore,
+        matchSource: candidate.matchSource,
+        parseable: candidate.parseable,
+        memoryEligible: Boolean(candidate.url && matchDecision === 'accept'),
+        labelledAt: new Date().toISOString(),
+      },
+    },
+  };
+}
+
 function coreSortStreamResults(streams: Stream[], meta: StreamMeta): Stream[] {
   const expectedTitle = expectedTitleForCoreMatch(meta);
 
-  const scoredCandidates = streams.map((stream: any, index: number) =>
-    scoreStreamCandidate({
+  const scoredCandidates = streams.map((stream: any, index: number) => {
+    const provider = maximusProviderForStream(stream);
+    const sourceType = maximusSourceTypeForStream(stream);
+
+    return scoreStreamCandidate({
       id: String(stream.url || stream.behaviorHints?.filename || stream.title || stream.name || index),
-      provider: stream.name?.startsWith('[TB+]') ? 'torbox' : 'external-addon',
-      sourceType: stream.name?.startsWith('[TB+]') ? 'cached' : 'external',
+      provider,
+      sourceType,
       name: stream.name,
       title: stream.title,
       filename: stream.behaviorHints?.filename,
@@ -80,10 +140,12 @@ function coreSortStreamResults(streams: Stream[], meta: StreamMeta): Stream[] {
       title: expectedTitle,
       season: meta.season,
       episode: meta.episode,
-    })
-  );
+    });
+  });
 
-  return sortCandidates(scoredCandidates).map((candidate) => candidate.raw as Stream);
+  return sortCandidates(scoredCandidates).map((candidate) =>
+    withMaximusLabels(candidate.raw as Stream, candidate)
+  );
 }
 
 function lazyTorBoxUrl(hash: string, season?: number, episode?: number): string {
