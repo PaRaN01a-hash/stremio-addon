@@ -4,7 +4,11 @@ const MAX_STREAMS_TOTAL =
   parseInt(process.env.MAX_STREAMS_TOTAL || '25');
 
 const MAX_SIZE_GB =
-  parseFloat(process.env.MAX_SIZE_GB || '20');
+  parseFloat(
+    process.env.MAX_SIZE_GB ||
+    process.env.TORBOX_MAX_SIZE_GB ||
+    '80'
+  );
 
 const ALLOW_CAM =
   process.env.ALLOW_CAM === 'true';
