@@ -2,11 +2,18 @@ import axios from 'axios';
 import { Stream, StreamMeta } from '../types';
 import { logger } from '../utils/logger';
 
-function addonManifestUrls(): string[] {
-  return (process.env.EXTERNAL_STREAM_ADDONS || '')
+function envUrlList(name: string): string[] {
+  return (process.env[name] || '')
     .split(',')
-    .map((s) => s.trim())
+    .map((url) => url.trim())
     .filter(Boolean);
+}
+
+function addonManifestUrls(): string[] {
+  return [
+    ...envUrlList('EXTERNAL_STREAM_ADDONS'),
+    ...envUrlList('STREAMTHRU_MANIFEST_URLS'),
+  ].filter((url, index, all) => all.indexOf(url) === index);
 }
 
 function streamUrlFromManifest(manifestUrl: string, meta: StreamMeta): string {

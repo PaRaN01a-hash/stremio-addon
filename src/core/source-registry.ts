@@ -31,6 +31,7 @@ export function getSourceRegistry(): Record<string, any> {
   const last = providerLast();
 
   const externalStreamAddonCount = listCount(process.env.EXTERNAL_STREAM_ADDONS);
+  const streamthruManifestCount = listCount(process.env.STREAMTHRU_MANIFEST_URLS);
   const externalStremioAddonCount = listCount(process.env.EXTERNAL_STREMIO_ADDONS);
 
   return {
@@ -128,6 +129,22 @@ export function getSourceRegistry(): Record<string, any> {
         role: 'Fallback direct HTTP stream provider if configured internally',
         last: {
           count: last.httpStreamCount,
+        },
+      },
+      {
+        id: 'streamthru',
+        name: 'Self-hosted StremThru',
+        kind: 'stremio-addon-bridge',
+        wired: true,
+        enabled: streamthruManifestCount > 0,
+        configuredCount: streamthruManifestCount,
+        coldLoadEnabled: envBool('EXTERNAL_ADDONS_ON_COLD_LOAD', true),
+        priority: 45,
+        maxStreams: envNumber('MAX_EXTERNAL_STREAMS', 4),
+        role: 'Use configured self-hosted StremThru manifest URLs as source feeders, then Maximus scores and remembers accepted hashes',
+        last: {
+          externalAddonCount: last.externalAddonCount,
+          contributed: last.quality?.signals?.externalContributed,
         },
       },
       {
