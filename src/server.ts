@@ -114,6 +114,7 @@ export function createServer(): express.Application {
         type,
         season,
         episode,
+          title: expectedTitle || undefined,
       });
 
       res.json({
