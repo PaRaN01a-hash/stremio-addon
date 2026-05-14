@@ -152,3 +152,25 @@ docker exec stremio-redis redis-cli INFO stats
 # stremio-addon
 Scrapper
 5ef7a1d0def5e6bc708f1f83968f92ea3f71d168
+
+## Maximus Core Engine: dev vs prod service URLs
+
+When running the addon directly on the host for dev, use host-accessible URLs:
+
+REDIS_URL=redis://127.0.0.1:6379
+ZILEAN_URL=http://localhost:8181
+
+When running the addon inside Docker/Compose for production, use Docker container DNS names:
+
+REDIS_URL=redis://stremio-redis:6379
+ZILEAN_URL=http://zilean:8181
+
+Reason: inside Docker, localhost points to the current container. If nuvio-addon uses ZILEAN_URL=http://localhost:8181, it looks for Zilean inside the nuvio-addon container and returns zero Zilean results.
+
+Known proof checkpoint:
+
+maximus-core-engine-v2.6
+- Prod Zilean fixed with ZILEAN_URL=http://zilean:8181
+- Prod matched dev provider behaviour again
+- From S01E01 produced 9 final streams and 4 safe local-index memory streams
+
