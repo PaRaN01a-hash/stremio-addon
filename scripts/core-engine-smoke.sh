@@ -240,6 +240,24 @@ run_case "From S01E01" "series" "tt9813792:1:1" "From"
 run_case "The Dark Knight" "movie" "tt0468569" "The Dark Knight"
 
 echo
+echo "---- local index cockpit ----"
+curl -s "$BASE/debug/local-index/stats.json" \
+  | python3 -c '
+import json, sys
+s=json.load(sys.stdin)
+print("rememberedItems:", s.get("rememberedItems"))
+print("totalStreams:", s.get("totalStreams"))
+print("movieItems:", s.get("movieItems"))
+print("seriesItems:", s.get("seriesItems"))
+print("resolverUrlCount:", s.get("resolverUrlCount"))
+print("externalUrlCount:", s.get("externalUrlCount"))
+print("acceptedCount:", s.get("acceptedCount"))
+print("nonAcceptedCount:", s.get("nonAcceptedCount"))
+print("buckets:", s.get("buckets"))
+print("newestIndexedAt:", s.get("newestIndexedAt"))
+'
+
+echo
 if [ "$FAILURES" -eq 0 ]; then
   echo "✅ Smoke test complete: all checks passed"
   exit 0
