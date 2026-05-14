@@ -734,9 +734,28 @@ return sorted.map(s => s.raw);
 /**
  * Fetch fresh streams from all providers (Jackett → TorBox + HTTP fallback).
  */
+function updateProviderStats(patch: Record<string, any>): void {
+  const stats = (globalThis as any).streamStats;
+  if (!stats) return;
+
+  stats.providerLast = {
+    ...(stats.providerLast || {}),
+    ...patch,
+    updatedAt: new Date().toISOString(),
+  };
+}
+
 async function fetchFreshStreams(meta: StreamMeta): Promise<Stream[]> {
   const started = Date.now();
   const { imdbId, type, season, episode } = meta;
+
+  updateProviderStats({
+    imdbId,
+    type: meta.type,
+    season,
+    episode,
+    startedAt: new Date().toISOString(),
+  });
 
   // Run internal providers + bridged addons in parallel
   // Fast path: do NOT wait for external addons on cold load.
@@ -756,6 +775,12 @@ async function fetchFreshStreams(meta: StreamMeta): Promise<Stream[]> {
     http: httpStreams.length,
   });
 
+  updateProviderStats({
+    providerFastMs: msSince(providerStart),
+    zileanCount: zileanTorrents.length,
+    httpStreamCount: httpStreams.length,
+  });
+
   const minZilean = parseInt(process.env.ZILEAN_MIN_RESULTS_BEFORE_JACKETT || '20');
   const jackettTorrents = zileanTorrents.length >= minZilean
     ? []
@@ -768,6 +793,11 @@ async function fetchFreshStreams(meta: StreamMeta): Promise<Stream[]> {
     if (!hash || seenHashes.has(hash)) return false;
     seenHashes.add(hash);
     return true;
+  });
+
+  updateProviderStats({
+    jackettCount: jackettTorrents.length,
+    uniqueTorrentCount: torrents.length,
   });
 
   // Resolve torrents through TorBox
@@ -788,7 +818,19 @@ async function fetchFreshStreams(meta: StreamMeta): Promise<Stream[]> {
     });
   }
 
+  updateProviderStats({
+    titleGuardedTorrentCount: titleGuardedTorrents.length,
+    titleGuardRejected: rejectStats.total,
+  });
+
     const debridResults = await resolveDebrid(titleGuardedTorrents, season, episode);
+  const torboxCachedCount = debridResults.filter((r) => r.cached).length;
+
+  updateProviderStats({
+    torboxMs: msSince(torboxStart),
+    torboxCandidateTorrents: titleGuardedTorrents.length,
+    torboxCached: torboxCachedCount,
+  });
   if ((globalThis as any).streamStats) {
     (globalThis as any).streamStats.torboxMs = msSince(torboxStart);
   }
@@ -796,7 +838,7 @@ async function fetchFreshStreams(meta: StreamMeta): Promise<Stream[]> {
     imdbId,
     ms: msSince(torboxStart),
     torrents: titleGuardedTorrents.length,
-    cached: debridResults.filter((r) => r.cached).length,
+    cached: torboxCachedCount,
   });
 
   const internalStreams = buildStreams(debridResults, httpStreams, season, episode)
@@ -809,6 +851,12 @@ async function fetchFreshStreams(meta: StreamMeta): Promise<Stream[]> {
         getExternalAddonStreams(meta),
       ])
     : [[], []];
+
+  updateProviderStats({
+    externalOnColdLoad: includeExternalOnColdLoad,
+    externalStremioCount: externalStremioStreams.length,
+    externalAddonCount: externalAddonStreams.length,
+  });
 
   if (!includeExternalOnColdLoad) {
     logger.info('External addons skipped on cold load', { imdbId });
@@ -831,6 +879,14 @@ async function fetchFreshStreams(meta: StreamMeta): Promise<Stream[]> {
       after: finalStreams.length,
     });
   }
+
+  updateProviderStats({
+    internalStreamCount: internalStreams.length,
+    mergedStreamCount: streams.length,
+    finalStreamCount: finalStreams.length,
+    totalMs: msSince(started),
+    coreSort: coreSortStreamsEnabled(),
+  });
 
   logger.info(`Fetched ${finalStreams.length} streams for ${imdbId}`, {
     debrid: debridResults.filter((r) => r.cached).length,

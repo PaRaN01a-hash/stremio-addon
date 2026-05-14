@@ -406,6 +406,7 @@ export function createServer(): express.Application {
         externalLastCount: stats.externalLastCount || 0,
         torboxMs: stats.torboxMs || null,
       },
+      providerLast: stats.providerLast || null,
     });
   });
 
