@@ -63,7 +63,7 @@ def export_memory(container, output):
 
     payload = {
         "format": "maximus-local-index-memory-v1",
-        "createdAt": dt.datetime.utcnow().replace(microsecond=0).isoformat() + "Z",
+        "createdAt": dt.datetime.now(dt.UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
         "redisContainer": container,
         "pattern": PATTERN,
         "count": len(records),
